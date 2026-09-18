@@ -1,4 +1,3 @@
-cat > README.md <<'EOF'
 # AZ-104 Azure Infrastructure Lab
 
 An Azure infrastructure project built while preparing for the Microsoft
