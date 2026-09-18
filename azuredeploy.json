@@ -1,0 +1,455 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.47.16.16243",
+      "templateHash": "4715559539261754085"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for the resources."
+      }
+    },
+    "computeLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]",
+      "metadata": {
+        "description": "Azure region used for the virtual machine and its regional networking."
+      }
+    },
+    "storagePrefix": {
+      "type": "string",
+      "defaultValue": "az104lab",
+      "metadata": {
+        "description": "Prefix used to generate the storage account name."
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "dev",
+      "allowedValues": [
+        "dev",
+        "test",
+        "prod"
+      ],
+      "metadata": {
+        "description": "Deployment environment."
+      }
+    },
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "vnet-az104-lab",
+      "metadata": {
+        "description": "Virtual network name."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.10.0.0/16",
+      "metadata": {
+        "description": "Virtual network address space."
+      }
+    },
+    "subnetName": {
+      "type": "string",
+      "defaultValue": "subnet-app",
+      "metadata": {
+        "description": "Subnet name."
+      }
+    },
+    "subnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.10.1.0/24",
+      "metadata": {
+        "description": "Subnet address range."
+      }
+    },
+    "nsgName": {
+      "type": "string",
+      "defaultValue": "nsg-az104-app",
+      "metadata": {
+        "description": "Network Security Group name."
+      }
+    },
+    "nicName": {
+      "type": "string",
+      "defaultValue": "nic-az104-vm",
+      "metadata": {
+        "description": "Network interface name."
+      }
+    },
+    "vmName": {
+      "type": "string",
+      "defaultValue": "vm-az104-ubuntu",
+      "metadata": {
+        "description": "Virtual machine name."
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_B1s",
+      "metadata": {
+        "description": "Virtual machine size."
+      }
+    },
+    "adminUsername": {
+      "type": "string",
+      "defaultValue": "azureuser",
+      "metadata": {
+        "description": "Administrator username."
+      }
+    },
+    "sshPublicKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "SSH public key used for the Linux VM."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "computeNetworkModule",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('computeLocation')]"
+          },
+          "environment": {
+            "value": "[parameters('environment')]"
+          },
+          "vnetName": {
+            "value": "vnet-az104-compute"
+          },
+          "vnetAddressPrefix": {
+            "value": "10.20.0.0/16"
+          },
+          "subnetName": {
+            "value": "subnet-compute"
+          },
+          "subnetAddressPrefix": {
+            "value": "10.20.1.0/24"
+          },
+          "nsgName": {
+            "value": "nsg-az104-compute"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.47.16.16243",
+              "templateHash": "10946354200314998986"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "environment": {
+              "type": "string"
+            },
+            "vnetName": {
+              "type": "string"
+            },
+            "vnetAddressPrefix": {
+              "type": "string"
+            },
+            "subnetName": {
+              "type": "string"
+            },
+            "subnetAddressPrefix": {
+              "type": "string"
+            },
+            "nsgName": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2025-05-01",
+              "name": "[parameters('nsgName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "Environment": "[parameters('environment')]",
+                "ManagedBy": "Bicep",
+                "Project": "AZ104-Lab"
+              },
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "Allow-SSH-From-VNet",
+                    "properties": {
+                      "priority": 100,
+                      "direction": "Inbound",
+                      "access": "Allow",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "22",
+                      "sourceAddressPrefix": "VirtualNetwork",
+                      "destinationAddressPrefix": "*"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2025-05-01",
+              "name": "[parameters('vnetName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "Environment": "[parameters('environment')]",
+                "ManagedBy": "Bicep",
+                "Project": "AZ104-Lab"
+              },
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "[parameters('vnetAddressPrefix')]"
+                  ]
+                },
+                "privateEndpointVNetPolicies": "Disabled",
+                "subnets": [
+                  {
+                    "name": "[parameters('subnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('subnetAddressPrefix')]",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+                      }
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "vnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+            },
+            "vnetName": {
+              "type": "string",
+              "value": "[parameters('vnetName')]"
+            },
+            "subnetName": {
+              "type": "string",
+              "value": "[parameters('subnetName')]"
+            },
+            "subnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetName'))]"
+            },
+            "nsgName": {
+              "type": "string",
+              "value": "[parameters('nsgName')]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "computeModule",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('computeLocation')]"
+          },
+          "environment": {
+            "value": "[parameters('environment')]"
+          },
+          "nicName": {
+            "value": "[parameters('nicName')]"
+          },
+          "subnetId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'computeNetworkModule'), '2025-04-01').outputs.subnetId.value]"
+          },
+          "vmName": {
+            "value": "[parameters('vmName')]"
+          },
+          "vmSize": {
+            "value": "[parameters('vmSize')]"
+          },
+          "adminUsername": {
+            "value": "[parameters('adminUsername')]"
+          },
+          "sshPublicKey": {
+            "value": "[parameters('sshPublicKey')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.47.16.16243",
+              "templateHash": "17162868010868266938"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "environment": {
+              "type": "string"
+            },
+            "nicName": {
+              "type": "string"
+            },
+            "subnetId": {
+              "type": "string"
+            },
+            "vmName": {
+              "type": "string"
+            },
+            "vmSize": {
+              "type": "string"
+            },
+            "adminUsername": {
+              "type": "string"
+            },
+            "sshPublicKey": {
+              "type": "securestring"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/networkInterfaces",
+              "apiVersion": "2025-05-01",
+              "name": "[parameters('nicName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "Environment": "[parameters('environment')]",
+                "ManagedBy": "Bicep",
+                "Project": "AZ104-Lab"
+              },
+              "properties": {
+                "ipConfigurations": [
+                  {
+                    "name": "ipconfig1",
+                    "properties": {
+                      "privateIPAllocationMethod": "Dynamic",
+                      "subnet": {
+                        "id": "[parameters('subnetId')]"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Compute/virtualMachines",
+              "apiVersion": "2025-04-01",
+              "name": "[parameters('vmName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "Environment": "[parameters('environment')]",
+                "ManagedBy": "Bicep",
+                "Project": "AZ104-Lab"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "hardwareProfile": {
+                  "vmSize": "[parameters('vmSize')]"
+                },
+                "storageProfile": {
+                  "imageReference": {
+                    "publisher": "Canonical",
+                    "offer": "ubuntu-24_04-lts",
+                    "sku": "server",
+                    "version": "latest"
+                  },
+                  "osDisk": {
+                    "createOption": "FromImage",
+                    "managedDisk": {
+                      "storageAccountType": "Standard_LRS"
+                    }
+                  }
+                },
+                "osProfile": {
+                  "computerName": "[parameters('vmName')]",
+                  "adminUsername": "[parameters('adminUsername')]",
+                  "linuxConfiguration": {
+                    "disablePasswordAuthentication": true,
+                    "ssh": {
+                      "publicKeys": [
+                        {
+                          "path": "[format('/home/{0}/.ssh/authorized_keys', parameters('adminUsername'))]",
+                          "keyData": "[parameters('sshPublicKey')]"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "networkProfile": {
+                  "networkInterfaces": [
+                    {
+                      "id": "[resourceId('Microsoft.Network/networkInterfaces', parameters('nicName'))]"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', parameters('nicName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "nicName": {
+              "type": "string",
+              "value": "[parameters('nicName')]"
+            },
+            "vmName": {
+              "type": "string",
+              "value": "[parameters('vmName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'computeNetworkModule')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "environment": {
+      "type": "string",
+      "value": "[parameters('environment')]"
+    },
+    "networkInterfaceName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'computeModule'), '2025-04-01').outputs.nicName.value]"
+    },
+    "virtualMachineName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'computeModule'), '2025-04-01').outputs.vmName.value]"
+    }
+  }
+}
