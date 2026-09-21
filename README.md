@@ -1,8 +1,6 @@
 # AZ-104 Azure Infrastructure Lab
 
-An Azure infrastructure project built while preparing for the Microsoft
-AZ-104 certification, covering modular Bicep, private networking, Linux
-virtual machines, deployment review, and operational verification.
+An Azure infrastructure project built while preparing for the Microsoft AZ-104 certification, demonstrating modular Bicep, private networking, Linux virtual machines, Azure Bastion, deployment review, secure administrative access, and operational verification.
 
 ## Project Overview
 
@@ -10,11 +8,23 @@ This lab follows a repeatable infrastructure deployment workflow:
 
 **Build → Validate → What-If → Deploy → Verify**
 
-The main troubleshooting exercise involved resolving a regional VM SKU
-restriction while protecting existing resources from unintended changes.
+The project has been developed incrementally, with each infrastructure change reviewed before deployment.
 
-The recorded deployment successfully provisioned an Ubuntu VM in Denmark
-East. After verification, the VM was deallocated.
+Key exercises completed so far include:
+
+- deploying Azure infrastructure with modular Bicep
+- troubleshooting a regional VM SKU restriction
+- protecting existing resources during incremental deployments
+- deploying a private Linux VM with no public IP
+- configuring a dedicated Azure Bastion subnet
+- deploying Azure Bastion for private administrative access
+- validating the Bastion-to-VM network path with Network Watcher
+- successfully connecting to the VM through Bastion using SSH key authentication
+- reviewing effective NSG rules and effective routes during troubleshooting
+
+The compute environment is deployed in Denmark East because the original UK South VM deployment encountered a subscription or regional SKU restriction.
+
+---
 
 ## Infrastructure
 
@@ -23,118 +33,264 @@ East. After verification, the VM was deallocated.
 | Resource group | `rg-az104-arm-lab` |
 | Compute region | Denmark East |
 | Virtual network | `vnet-az104-compute` |
-| Subnet | `subnet-compute` — `10.20.1.0/24` |
+| Compute subnet | `subnet-compute` — `10.20.1.0/24` |
+| Bastion subnet | `AzureBastionSubnet` — `10.20.2.0/26` |
 | Network security group | `nsg-az104-compute` |
 | Network interface | `nic-az104-compute` |
 | Virtual machine | `vm-az104-ubuntu` |
 | Operating system | Ubuntu 24.04 LTS |
 | VM size | `Standard_B1s` |
-| Public IP | None |
-| Authentication configuration | SSH public key |
-| Last recorded power state | Stopped (deallocated) |
+| VM private IP | `10.20.1.4` during recorded validation |
+| VM public IP | None |
+| Authentication | SSH public key |
+| Bastion host | `bas-az104-compute` |
+| Bastion SKU | Basic |
+| Infrastructure as Code | Bicep |
+
+---
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph RG["rg-az104-arm-lab"]
-        Existing["Existing resources — excluded from active compute deployment"]
+    User["Administrator / Browser"]
 
+    subgraph RG["rg-az104-arm-lab"]
         subgraph Compute["Denmark East compute environment"]
-            VNet["vnet-az104-compute"]
-            Subnet["subnet-compute • 10.20.1.0/24"]
+            Bastion["Azure Bastion<br/>bas-az104-compute"]
+            BastionSubnet["AzureBastionSubnet<br/>10.20.2.0/26"]
+
+            VNet["vnet-az104-compute<br/>10.20.0.0/16"]
+            ComputeSubnet["subnet-compute<br/>10.20.1.0/24"]
             NSG["nsg-az104-compute"]
-            NIC["nic-az104-compute • no public IP"]
-            VM["vm-az104-ubuntu • Standard_B1s"]
+            NIC["nic-az104-compute<br/>Private IP only"]
+            VM["vm-az104-ubuntu<br/>Ubuntu 24.04 LTS"]
             Disk["Managed OS disk"]
 
-            VNet --> Subnet
-            Subnet --> NIC
+            VNet --> BastionSubnet
+            VNet --> ComputeSubnet
+
+            BastionSubnet --> Bastion
+            ComputeSubnet --> NIC
             NIC --> VM
             VM --> Disk
-            NSG -. "SSH rule: VirtualNetwork → TCP 22" .-> NIC
+
+            NSG -. "TCP 22 from VirtualNetwork" .-> ComputeSubnet
         end
     end
+
+    User -->|"HTTPS"| Bastion
+    Bastion -->|"Private TCP 22"| VM
 ```
 
-The diagram summarizes the compute resources and security rule. Effective
-traffic filtering depends on the deployed NSG associations and all
-applicable rules.
+The VM does not have a public IP address.
+
+Administrative SSH access is provided through Azure Bastion over the private virtual network.
+
+---
+
+## Private Access Design
+
+The private management path is:
+
+```text
+Administrator Browser
+        |
+        | HTTPS
+        v
+Azure Bastion
+10.20.2.5
+        |
+        | TCP 22
+        v
+Private Linux VM
+10.20.1.4
+```
+
+The VM remains inaccessible directly from the public internet.
+
+The NSG permits SSH from the `VirtualNetwork` service tag rather than exposing TCP port 22 to arbitrary internet sources.
+
+---
 
 ## Repository Layout
 
 ```text
 .
 ├── azuredeploy.bicep
+├── azuredeploy.json
 ├── dev.bicepparam
+├── audit-project-tag-policy.json
+│
 ├── modules/
+│   ├── bastion.bicep
+│   ├── bastion.json
+│   ├── compute.bicep
+│   ├── compute.json
+│   ├── network.bicep
+│   ├── network.json
+│   ├── storage.bicep
+│   └── storage.json
+│
 ├── docs/
 │   └── screenshots/
-│       ├── what-if.png
-│       ├── vm-deallocated.png
+│       ├── bastion-connectivity-test.png
+│       ├── bastion-ssh-success.png
 │       ├── nic-configuration.png
-│       └── nsg-ssh-rule.png
+│       ├── nsg-ssh-rule.png
+│       ├── vm-deallocated.png
+│       └── what-if.png
+│
 ├── README.md
 └── learn.md
 ```
 
-## Deployment Evidence
+---
 
-### Pre-deployment What-If review
+# Deployment Evidence
 
-The original preview proposed four resource creations and left 15 existing
-resources ignored, with no modifications or deletions proposed.
+## Pre-deployment What-If Review
+
+The original compute preview proposed four resource creations and left existing resources ignored, with no unintended deletions proposed.
 
 ![Pre-deployment What-If result](docs/screenshots/what-if.png)
 
-This is historical evidence from before deployment. Subsequent previews
-can differ because the resources now exist.
+This is historical evidence from an earlier deployment stage. Later What-If results changed as additional infrastructure was introduced.
 
-### VM verification and deallocation
+---
 
-The portal shows the Linux VM in Denmark East using Standard_B1s, with no
-public IP. After deployment verification, the VM was deallocated.
+## VM Verification and Deallocation
+
+The original compute validation confirmed that the Linux VM was successfully provisioned in Denmark East using `Standard_B1s` with no public IP.
+
+The VM was deallocated after the initial compute exercise to reduce unnecessary compute charges.
 
 ![VM overview showing deallocated status](docs/screenshots/vm-deallocated.png)
 
-### Network interface configuration
+The VM was later started again temporarily to complete the Azure Bastion private-access exercise.
 
-The compute NIC connects to subnet-compute within vnet-az104-compute.
-Its primary IPv4 configuration has no associated public IP.
+---
+
+## Network Interface Configuration
+
+The VM NIC connects to `subnet-compute` inside `vnet-az104-compute`.
+
+Its primary IPv4 configuration does not have an associated public IP address.
 
 ![Compute NIC configuration](docs/screenshots/nic-configuration.png)
 
-### SSH security rule
+This confirms that the VM itself is not directly exposed to the internet.
 
-The Allow-SSH-From-VNet rule permits inbound TCP traffic on port 22 from
-the VirtualNetwork service tag, with priority 100.
+---
+
+## SSH Security Rule
+
+The `Allow-SSH-From-VNet` NSG rule permits inbound TCP traffic on port 22 from the `VirtualNetwork` service tag with priority 100.
 
 ![NSG SSH rule configuration](docs/screenshots/nsg-ssh-rule.png)
 
-This screenshot documents the configured rule. It does not demonstrate a
-successful SSH connection or that all other inbound traffic is blocked.
+The effective NSG was also inspected during Bastion troubleshooting and confirmed that the SSH allow rule was active.
 
-## Deployment Workflow
+---
 
-### Prerequisites
+## Bastion-to-VM Connectivity
 
-- Azure CLI with Bicep support.
-- An Azure subscription with suitable deployment permissions.
-- The target resource group.
-- An SSH key pair, with the public key configured in the deployment parameters.
-- A VM size available to the subscription in the selected region.
+Azure Network Watcher Connection Troubleshoot was used to validate the private TCP path from Azure Bastion to the VM.
 
-Review `dev.bicepparam`, the selected subscription, and the target resource
-group before deployment. Denmark East and Standard_B1s were successful for
-this lab; availability can vary.
+The recorded test confirmed:
 
-### 1. Build
+```text
+Source:
+bas-az104-compute
+10.20.2.5
+
+Destination:
+vm-az104-ubuntu
+10.20.1.4
+
+Protocol:
+TCP
+
+Destination port:
+22
+
+Result:
+Reachable
+```
+
+Both hops were reported as healthy.
+
+![Bastion connectivity test](docs/screenshots/bastion-connectivity-test.png)
+
+This provided network-level evidence that Bastion could reach the private VM over SSH.
+
+---
+
+## Successful Private SSH Access
+
+A successful SSH session was established through Azure Bastion using SSH private-key authentication.
+
+The VM remained private and did not require a public IP address.
+
+Inside the Bastion session, the following commands were used:
+
+```bash
+whoami
+hostname
+hostname -I
+```
+
+The recorded results were:
+
+```text
+azureuser
+vm-az104-ubuntu
+10.20.1.4
+```
+
+![Successful Bastion SSH session](docs/screenshots/bastion-ssh-success.png)
+
+This completes the private VM access milestone.
+
+---
+
+# Deployment Workflow
+
+## Prerequisites
+
+- Azure CLI with Bicep support
+- Azure subscription with suitable deployment permissions
+- target resource group
+- SSH key pair
+- public SSH key available through the `AZ104_SSH_PUBLIC_KEY` environment variable
+- VM SKU available in the selected compute region
+
+Set the SSH public key before validating or deploying:
+
+```bash
+export AZ104_SSH_PUBLIC_KEY="$(cat ~/.ssh/az104_lab_ed25519.pub)"
+```
+
+The private key must remain on the local machine and must never be committed to the repository.
+
+---
+
+## 1. Build
 
 ```bash
 az bicep build --file azuredeploy.bicep
 ```
 
-### 2. Validate
+Bicep modules can also be compiled independently during development:
+
+```bash
+az bicep build --file modules/network.bicep
+az bicep build --file modules/bastion.bicep
+```
+
+---
+
+## 2. Validate
 
 ```bash
 az deployment group validate \
@@ -142,10 +298,11 @@ az deployment group validate \
   --parameters dev.bicepparam
 ```
 
-Review diagnostics as well as the overall result. Validation can succeed
-while reporting that some nested resources were skipped during evaluation.
+Validation diagnostics should be reviewed rather than relying only on the overall deployment result.
 
-### 3. Preview changes
+---
+
+## 3. Preview Changes
 
 ```bash
 az deployment group what-if \
@@ -153,11 +310,22 @@ az deployment group what-if \
   --parameters dev.bicepparam
 ```
 
-Inspect proposed creations, modifications, and deletions before proceeding.
+A concise resource-level preview can also be generated with:
 
-### 4. Deploy
+```bash
+az deployment group what-if \
+  --resource-group rg-az104-arm-lab \
+  --parameters dev.bicepparam \
+  --result-format ResourceIdOnly
+```
 
-This command creates or updates Azure resources and can incur charges.
+What-If is reviewed before every deployment to identify unexpected creations, modifications, or deletions.
+
+---
+
+## 4. Deploy
+
+The following command creates or updates Azure resources and can incur charges:
 
 ```bash
 az deployment group create \
@@ -165,7 +333,9 @@ az deployment group create \
   --parameters dev.bicepparam
 ```
 
-### 5. Verify
+---
+
+## 5. Verify the VM
 
 ```bash
 az vm show \
@@ -176,54 +346,212 @@ az vm show \
   --output table
 ```
 
-## Troubleshooting and Decisions
+---
 
-### Regional VM SKU restriction
+## 6. Verify Bastion
 
-The initial UK South compute attempt encountered a SKU restriction.
-A separate `computeLocation` parameter allowed the compute environment
-to use Denmark East without changing the location of earlier resources.
+```bash
+az network bastion show \
+  --resource-group rg-az104-arm-lab \
+  --name bas-az104-compute \
+  --query "{Name:name,Location:location,ProvisioningState:provisioningState,Sku:sku.name}" \
+  --output table
+```
 
-### Protecting existing resources
+Recorded provisioning state:
 
-Earlier network and storage module calls were commented out of the active
-deployment path. The new compute environment used a separate network.
+```text
+Succeeded
+```
 
-The deployment used incremental mode. Omitted resources were retained,
-but included resources could still be modified. What-If was therefore
-reviewed before deployment.
+---
 
-### Validation warnings
+## 7. Verify Subnets
 
-Unused-parameter warnings remained after earlier module calls were
-disabled. These identified future template cleanup work.
+```bash
+az network vnet subnet list \
+  --resource-group rg-az104-arm-lab \
+  --vnet-name vnet-az104-compute \
+  --query "[].{Name:name,AddressPrefix:addressPrefix}" \
+  --output table
+```
 
-Validation also reported a nested-deployment evaluation warning.
-An overall successful result was not treated as proof that every nested
-resource had been fully checked.
+Expected network layout:
 
-### Post-deployment review
+```text
+subnet-compute       10.20.1.0/24
+AzureBastionSubnet   10.20.2.0/26
+```
 
-A later What-If run reported:
+---
 
-- 1 resource to modify: the compute NIC.
-- 3 resources unchanged.
-- 16 resources ignored.
+# Troubleshooting and Engineering Decisions
 
-The NIC differences require investigation before being classified as
-template drift or service-generated defaults. No changes were applied
-by that What-If command.
+## Regional VM SKU Restriction
 
-### Private VM access
+The initial UK South compute deployment encountered a VM SKU restriction.
 
-The VM has no public IP. An NSG allow rule alone does not provide a network
-path from a laptop to the VM's private address.
+Instead of changing the location of existing infrastructure, a separate `computeLocation` parameter was introduced.
 
-Successful secure SSH access remains a follow-up exercise.
+The compute environment was successfully deployed in Denmark East using `Standard_B1s`.
 
-## Cost Management
+The key lesson was to distinguish infrastructure-code problems from Azure subscription or regional availability constraints.
 
-The VM was deallocated after verification:
+---
+
+## Protecting Existing Resources
+
+Earlier infrastructure already existed inside the resource group.
+
+The deployment used incremental mode, which retains resources omitted from the deployment template but can still modify resources included in the deployment.
+
+Before applying changes, What-If was reviewed to identify which resources Azure intended to create or modify.
+
+---
+
+## Validation Warnings
+
+Unused parameters remained after earlier module calls were temporarily removed from the active deployment path.
+
+These warnings did not prevent deployment but identified template cleanup work.
+
+Validation warnings are treated as engineering feedback rather than ignored simply because the deployment succeeds.
+
+---
+
+## NIC What-If Differences
+
+A later What-If operation reported differences on the compute NIC involving properties such as:
+
+```text
+privateIPAddress
+privateIPAddressVersion
+kind
+auxiliaryMode
+```
+
+These appeared to include service-generated or default Azure properties rather than intentional infrastructure changes.
+
+The differences were investigated before deployment rather than automatically applying the preview.
+
+---
+
+## Private VM Access
+
+Initially, the VM had:
+
+- no public IP
+- an NSG allowing TCP 22 from `VirtualNetwork`
+- SSH public-key authentication
+
+However, an NSG allow rule alone does not create a network path from an administrator workstation to a private VM.
+
+Azure Bastion was therefore added to provide the secure management path.
+
+A dedicated subnet was created:
+
+```text
+AzureBastionSubnet
+10.20.2.0/26
+```
+
+Azure Bastion then provided SSH access to the VM without assigning the VM a public IP.
+
+---
+
+## Bastion Connection Troubleshooting
+
+The first browser-based Bastion attempts disconnected before an SSH session was established.
+
+The issue was investigated systematically rather than changing infrastructure randomly.
+
+The following checks were performed:
+
+### VM SSH Listener
+
+Azure Run Command confirmed TCP port 22 was listening on the VM.
+
+### SSH Key Verification
+
+The local SSH public-key fingerprint was compared with the fingerprint stored in:
+
+```text
+/home/azureuser/.ssh/authorized_keys
+```
+
+The fingerprints matched.
+
+### Effective NSG
+
+The VM's effective security rules confirmed:
+
+```text
+Priority 100
+Allow
+VirtualNetwork
+TCP 22
+```
+
+### Effective Route Table
+
+The VM NIC showed:
+
+```text
+10.20.0.0/16
+Next hop: VnetLocal
+```
+
+confirming a valid local route between the Bastion and compute subnets.
+
+### Network Watcher
+
+Connection Troubleshoot then confirmed the Bastion-to-VM TCP/22 path was healthy and reachable.
+
+The final issue was traced to selecting the wrong local SSH private-key file in the browser file picker.
+
+After selecting the dedicated Bastion private key, the SSH session succeeded.
+
+This exercise demonstrated the importance of separating:
+
+```text
+Network reachability
+        ↓
+Security rules
+        ↓
+Routing
+        ↓
+SSH service availability
+        ↓
+Authentication
+        ↓
+Client configuration
+```
+
+---
+
+# Security Controls
+
+The current compute deployment demonstrates several security practices:
+
+- VM has no public IP address
+- password authentication is disabled
+- SSH uses public-key authentication
+- SSH private keys are not stored in Git
+- NSG restricts SSH to `VirtualNetwork`
+- Azure Bastion provides the administrative access path
+- VM uses a system-assigned managed identity
+- infrastructure is defined using Bicep
+- What-If is reviewed before infrastructure changes are applied
+
+The managed identity is currently provisioned but will be exercised with scoped Azure RBAC in the next phase of the lab.
+
+---
+
+# Cost Management
+
+Azure infrastructure used in this lab can incur charges.
+
+The VM can be deallocated when it is not required:
 
 ```bash
 az vm deallocate \
@@ -231,7 +559,7 @@ az vm deallocate \
   --name vm-az104-ubuntu
 ```
 
-Its power state was checked with:
+Verify the power state:
 
 ```bash
 az vm get-instance-view \
@@ -241,28 +569,62 @@ az vm get-instance-view \
   --output tsv
 ```
 
-The recorded result was `VM deallocated`. Managed disks and other retained
-resources can still incur charges.
+Azure Bastion is also a cost-bearing resource.
 
-The resource group contains other resources, so cleanup requires a
-resource inventory and dependency review.
+The Bicep deployment includes a `deployBastion` parameter so Bastion can remain disabled when it is not required.
 
-## Next Steps
+Bastion can be removed after validation:
 
-- Investigate the NIC differences in the post-deployment What-If result.
-- Complete and document secure SSH access.
-- Exercise managed identity and scoped RBAC.
-- Add Azure Monitor and Log Analytics.
-- Explore private connectivity.
-- Configure and test backup and recovery.
-- Remove unused parameters and improve module organization.
+```bash
+az network bastion delete \
+  --resource-group rg-az104-arm-lab \
+  --name bas-az104-compute \
+  --yes
+```
 
-## Learning Notes
+The associated Bastion public IP can also be deleted when it is no longer required.
 
-See [learn.md](learn.md) for troubleshooting decisions and lessons learned.
-EOF
+Managed disks and other retained resources may continue to incur charges even when the VM is deallocated.
 
-Olawale Azeez
-AWS Certified Developer Associate AWS Certified Solutions Architect -Associate
+---
+
+# Next Steps
+
+The next phases of the lab will extend the environment beyond basic compute and networking.
+
+Planned work:
+
+- exercise the VM's system-assigned managed identity
+- assign scoped Azure RBAC permissions
+- restore Storage to the active Bicep architecture
+- configure a Storage private endpoint
+- configure Azure Private DNS
+- add Azure Monitor and Log Analytics
+- collect VM guest logs and metrics
+- create a useful KQL query
+- configure an Azure Monitor alert
+- deploy and test Azure Policy
+- demonstrate policy compliance and remediation
+- configure VM backup
+- create a recovery point and test restore
+- add Bicep CI validation with GitHub Actions
+- authenticate GitHub Actions to Azure using OIDC rather than client secrets
+- remove remaining unused parameters and continue module cleanup
+
+---
+
+# Learning Notes
+
+See [learn.md](learn.md) for troubleshooting decisions, deployment observations, and lessons learned during the lab.
+
+---
+
+## Author
+
+**Olawale Azeez**
+
+AWS Certified Developer – Associate  
+AWS Certified Solutions Architect – Associate  
 AWS Certified Cloud Practitioner
-Cloud Engineer | Platform Engineer | DevOps Engineer
+
+**Platform Engineer | AWS & Azure | Kubernetes | Terraform & Bicep | GitOps | CI/CD**
