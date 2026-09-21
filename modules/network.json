@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "10946354200314998986"
+      "templateHash": "10712834207720386076"
     }
   },
   "parameters": {
@@ -26,6 +26,13 @@
     },
     "subnetAddressPrefix": {
       "type": "string"
+    },
+    "bastionSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.20.2.0/26",
+      "metadata": {
+        "description": "Address range reserved for Azure Bastion."
+      }
     },
     "nsgName": {
       "type": "string"
@@ -86,6 +93,12 @@
                 "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]"
               }
             }
+          },
+          {
+            "name": "AzureBastionSubnet",
+            "properties": {
+              "addressPrefix": "[parameters('bastionSubnetAddressPrefix')]"
+            }
           }
         ]
       },
@@ -114,6 +127,10 @@
     "nsgName": {
       "type": "string",
       "value": "[parameters('nsgName')]"
+    },
+    "bastionSubnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'AzureBastionSubnet')]"
     }
   }
 }

@@ -7,6 +7,9 @@ param vnetAddressPrefix string
 param subnetName string
 param subnetAddressPrefix string
 
+@description('Address range reserved for Azure Bastion.')
+param bastionSubnetAddressPrefix string = '10.20.2.0/26'
+
 param nsgName string
 
 resource nsg 'Microsoft.Network/networkSecurityGroups@2025-05-01' = {
@@ -52,17 +55,23 @@ resource vnet 'Microsoft.Network/virtualNetworks@2025-05-01' = {
     }
     privateEndpointVNetPolicies: 'Disabled'
     subnets: [
-      {
-        name: subnetName
-        properties: {
-          addressPrefix: subnetAddressPrefix
-          networkSecurityGroup: {
-            id: nsg.id
-          }
-        }
+  {
+    name: subnetName
+    properties: {
+      addressPrefix: subnetAddressPrefix
+      networkSecurityGroup: {
+        id: nsg.id
       }
-    ]
+    }
   }
+  {
+    name: 'AzureBastionSubnet'
+    properties: {
+      addressPrefix: bastionSubnetAddressPrefix
+    }
+  }
+]
+}
 }
 
 output vnetId string = vnet.id
@@ -74,3 +83,9 @@ output subnetId string = resourceId(
   subnetName
 )
 output nsgName string = nsg.name
+
+output bastionSubnetId string = resourceId(
+  'Microsoft.Network/virtualNetworks/subnets',
+  vnet.name,
+  'AzureBastionSubnet'
+)

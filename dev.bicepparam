@@ -4,6 +4,8 @@ param environment = 'dev'
 param location = 'uksouth'
 param computeLocation = 'denmarkeast'
 
+param deployBastion = false
+
 param storagePrefix = 'az104lab'
 
 param vnetName = 'vnet-az104-lab'
