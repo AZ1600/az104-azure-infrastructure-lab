@@ -7,6 +7,9 @@ param computeLocation string = location
 @description('Prefix used to generate the storage account name.')
 param storagePrefix string = 'az104lab'
 
+@description('Existing storage account used for managed identity access testing.')
+param storageAccountName string
+
 @allowed([
   'dev'
   'test'
@@ -39,11 +42,11 @@ param vmName string = 'vm-az104-ubuntu'
 @description('Virtual machine size.')
 param vmSize string = 'Standard_B1s'
 
-@description('Deploy Azure Bastion for private VM administration.')
-param deployBastion bool = false
-
 @description('Administrator username.')
 param adminUsername string = 'azureuser'
+
+@description('Deploy Azure Bastion for private VM administration.')
+param deployBastion bool = false
 
 @secure()
 @description('SSH public key used for the Linux VM.')
@@ -59,6 +62,7 @@ module storage './modules/storage.bicep' = {
   }
 }
 */
+
 /*
 module network './modules/network.bicep' = {
   name: 'networkModule'
@@ -76,19 +80,26 @@ module network './modules/network.bicep' = {
 
 module computeNetwork './modules/network.bicep' = {
   name: 'computeNetworkModule'
+
   params: {
     location: computeLocation
     environment: environment
+
     vnetName: 'vnet-az104-compute'
     vnetAddressPrefix: '10.20.0.0/16'
+
     subnetName: 'subnet-compute'
     subnetAddressPrefix: '10.20.1.0/24'
+
+    bastionSubnetAddressPrefix: '10.20.2.0/26'
+
     nsgName: 'nsg-az104-compute'
   }
 }
 
 module bastion './modules/bastion.bicep' = if (deployBastion) {
   name: 'bastionModule'
+
   params: {
     location: computeLocation
     environment: environment
@@ -98,11 +109,14 @@ module bastion './modules/bastion.bicep' = if (deployBastion) {
 
 module compute './modules/compute.bicep' = {
   name: 'computeModule'
+
   params: {
     location: computeLocation
     environment: environment
+
     nicName: nicName
     subnetId: computeNetwork.outputs.subnetId
+
     vmName: vmName
     vmSize: vmSize
     adminUsername: adminUsername
@@ -110,9 +124,26 @@ module compute './modules/compute.bicep' = {
   }
 }
 
+module rbac './modules/rbac.bicep' = {
+  name: 'rbacModule'
+
+  params: {
+    principalId: compute.outputs.principalId
+
+    principalResourceId: resourceId(
+      'Microsoft.Compute/virtualMachines',
+      vmName
+  )
+
+    storageAccountName: storageAccountName
+  }
+}
+
 /*
 output storageAccountName string = storage.outputs.storageAccountName
 */
+
 output environment string = environment
 output networkInterfaceName string = compute.outputs.nicName
 output virtualMachineName string = compute.outputs.vmName
+output virtualMachinePrincipalId string = compute.outputs.principalId

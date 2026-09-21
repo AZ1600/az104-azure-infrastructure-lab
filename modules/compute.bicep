@@ -42,13 +42,16 @@ resource vm 'Microsoft.Compute/virtualMachines@2025-04-01' = {
     ManagedBy: 'Bicep'
     Project: 'AZ104-Lab'
   }
+
   identity: {
     type: 'SystemAssigned'
   }
+
   properties: {
     hardwareProfile: {
       vmSize: vmSize
     }
+
     storageProfile: {
       imageReference: {
         publisher: 'Canonical'
@@ -56,6 +59,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2025-04-01' = {
         sku: 'server'
         version: 'latest'
       }
+
       osDisk: {
         createOption: 'FromImage'
         managedDisk: {
@@ -63,11 +67,14 @@ resource vm 'Microsoft.Compute/virtualMachines@2025-04-01' = {
         }
       }
     }
+
     osProfile: {
       computerName: vmName
       adminUsername: adminUsername
+
       linuxConfiguration: {
         disablePasswordAuthentication: true
+
         ssh: {
           publicKeys: [
             {
@@ -78,6 +85,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2025-04-01' = {
         }
       }
     }
+
     networkProfile: {
       networkInterfaces: [
         {
@@ -90,3 +98,5 @@ resource vm 'Microsoft.Compute/virtualMachines@2025-04-01' = {
 
 output nicName string = nic.name
 output vmName string = vm.name
+output vmId string = vm.id
+output principalId string = vm.identity.principalId
