@@ -39,6 +39,9 @@ param vmName string = 'vm-az104-ubuntu'
 @description('Virtual machine size.')
 param vmSize string = 'Standard_B1s'
 
+@description('Deploy Azure Bastion for private VM administration.')
+param deployBastion bool = false
+
 @description('Administrator username.')
 param adminUsername string = 'azureuser'
 
@@ -81,6 +84,15 @@ module computeNetwork './modules/network.bicep' = {
     subnetName: 'subnet-compute'
     subnetAddressPrefix: '10.20.1.0/24'
     nsgName: 'nsg-az104-compute'
+  }
+}
+
+module bastion './modules/bastion.bicep' = if (deployBastion) {
+  name: 'bastionModule'
+  params: {
+    location: computeLocation
+    environment: environment
+    bastionSubnetId: computeNetwork.outputs.bastionSubnetId
   }
 }
 
