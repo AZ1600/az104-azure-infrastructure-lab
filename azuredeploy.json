@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "2913769586435917437"
+      "templateHash": "6224472216353573922"
     }
   },
   "parameters": {
@@ -28,6 +28,12 @@
       "defaultValue": "az104lab",
       "metadata": {
         "description": "Prefix used to generate the storage account name."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Existing storage account used for managed identity access testing."
       }
     },
     "environment": {
@@ -98,18 +104,18 @@
         "description": "Virtual machine size."
       }
     },
-    "deployBastion": {
-      "type": "bool",
-      "defaultValue": false,
-      "metadata": {
-        "description": "Deploy Azure Bastion for private VM administration."
-      }
-    },
     "adminUsername": {
       "type": "string",
       "defaultValue": "azureuser",
       "metadata": {
         "description": "Administrator username."
+      }
+    },
+    "deployBastion": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Deploy Azure Bastion for private VM administration."
       }
     },
     "sshPublicKey": {
@@ -147,6 +153,9 @@
           },
           "subnetAddressPrefix": {
             "value": "10.20.1.0/24"
+          },
+          "bastionSubnetAddressPrefix": {
+            "value": "10.20.2.0/26"
           },
           "nsgName": {
             "value": "nsg-az104-compute"
@@ -447,7 +456,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.47.16.16243",
-              "templateHash": "17162868010868266938"
+              "templateHash": "6318056759905919261"
             }
           },
           "parameters": {
@@ -568,12 +577,98 @@
             "vmName": {
               "type": "string",
               "value": "[parameters('vmName')]"
+            },
+            "vmId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Compute/virtualMachines', parameters('vmName'))]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Compute/virtualMachines', parameters('vmName')), '2025-04-01', 'full').identity.principalId]"
             }
           }
         }
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'computeNetworkModule')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "rbacModule",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'computeModule'), '2025-04-01').outputs.principalId.value]"
+          },
+          "principalResourceId": {
+            "value": "[resourceId('Microsoft.Compute/virtualMachines', parameters('vmName'))]"
+          },
+          "storageAccountName": {
+            "value": "[parameters('storageAccountName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.47.16.16243",
+              "templateHash": "3405014008651496777"
+            }
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Object ID of the managed identity receiving the RBAC role."
+              }
+            },
+            "principalResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Stable Azure resource ID of the principal resource."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the existing Storage account."
+              }
+            }
+          },
+          "variables": {
+            "storageBlobDataReaderRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('principalResourceId'), variables('storageBlobDataReaderRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('storageBlobDataReaderRoleId')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ],
+          "outputs": {
+            "roleAssignmentId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('principalResourceId'), variables('storageBlobDataReaderRoleId')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'computeModule')]"
       ]
     }
   ],
@@ -589,6 +684,10 @@
     "virtualMachineName": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'computeModule'), '2025-04-01').outputs.vmName.value]"
+    },
+    "virtualMachinePrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'computeModule'), '2025-04-01').outputs.principalId.value]"
     }
   }
 }
