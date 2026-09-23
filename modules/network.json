@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.47.16.16243",
-      "templateHash": "10712834207720386076"
+      "templateHash": "18416750832851997733"
     }
   },
   "parameters": {
@@ -32,6 +32,13 @@
       "defaultValue": "10.20.2.0/26",
       "metadata": {
         "description": "Address range reserved for Azure Bastion."
+      }
+    },
+    "privateEndpointSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.20.3.0/27",
+      "metadata": {
+        "description": "Address range reserved for private endpoints."
       }
     },
     "nsgName": {
@@ -83,7 +90,6 @@
             "[parameters('vnetAddressPrefix')]"
           ]
         },
-        "privateEndpointVNetPolicies": "Disabled",
         "subnets": [
           {
             "name": "[parameters('subnetName')]",
@@ -98,6 +104,13 @@
             "name": "AzureBastionSubnet",
             "properties": {
               "addressPrefix": "[parameters('bastionSubnetAddressPrefix')]"
+            }
+          },
+          {
+            "name": "subnet-private-endpoints",
+            "properties": {
+              "addressPrefix": "[parameters('privateEndpointSubnetAddressPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled"
             }
           }
         ]
@@ -131,6 +144,10 @@
     "bastionSubnetId": {
       "type": "string",
       "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'AzureBastionSubnet')]"
+    },
+    "privateEndpointSubnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), 'subnet-private-endpoints')]"
     }
   }
 }

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.47.16.16243",
+      "templateHash": "3598624773216198254"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the existing Storage account that will receive a private Blob endpoint."
+      }
+    },
+    "privateEndpointSubnetId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the subnet reserved for private endpoints."
+      }
+    },
+    "vnetId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the virtual network that should resolve the private Storage endpoint."
+      }
+    }
+  },
+  "variables": {
+    "storageDnsSuffix": "[environment().suffixes.storage]",
+    "privateDnsZoneName": "[format('privatelink.blob.{0}', variables('storageDnsSuffix'))]",
+    "privateEndpointName": "[format('pe-{0}-blob', parameters('storageAccountName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('privateDnsZoneName')]",
+      "location": "global",
+      "tags": {
+        "Environment": "[parameters('environment')]",
+        "ManagedBy": "Bicep",
+        "Project": "AZ104-Lab"
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('privateDnsZoneName'), format('link-{0}-compute-vnet', parameters('environment')))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[parameters('vnetId')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2025-05-01",
+      "name": "[variables('privateEndpointName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "Environment": "[parameters('environment')]",
+        "ManagedBy": "Bicep",
+        "Project": "AZ104-Lab"
+      },
+      "properties": {
+        "subnet": {
+          "id": "[parameters('privateEndpointSubnetId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "storage-blob-connection",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "groupIds": [
+                "blob"
+              ],
+              "requestMessage": "Private Blob access for the AZ-104 infrastructure lab."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2025-05-01",
+      "name": "[format('{0}/{1}', variables('privateEndpointName'), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "blob-private-dns",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "privateEndpointId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointName'))]"
+    },
+    "privateEndpointName": {
+      "type": "string",
+      "value": "[variables('privateEndpointName')]"
+    },
+    "privateDnsZoneName": {
+      "type": "string",
+      "value": "[variables('privateDnsZoneName')]"
+    },
+    "privateDnsVnetLinkName": {
+      "type": "string",
+      "value": "[format('link-{0}-compute-vnet', parameters('environment'))]"
+    }
+  }
+}
