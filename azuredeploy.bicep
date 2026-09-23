@@ -1,13 +1,7 @@
-@description('Azure region for the resources.')
-param location string = resourceGroup().location
+@description('Azure region used for the compute virtual network and private endpoint.')
+param computeLocation string = resourceGroup().location
 
-@description('Azure region used for the virtual machine and its regional networking.')
-param computeLocation string = location
-
-@description('Prefix used to generate the storage account name.')
-param storagePrefix string = 'az104lab'
-
-@description('Existing storage account used for managed identity access testing.')
+@description('Existing storage account used for private endpoint testing.')
 param storageAccountName string
 
 @allowed([
@@ -18,65 +12,13 @@ param storageAccountName string
 @description('Deployment environment.')
 param environment string = 'dev'
 
-@description('Virtual network name.')
-param vnetName string = 'vnet-az104-lab'
+@description('Address range reserved for private endpoints in the compute virtual network.')
+param privateEndpointSubnetAddressPrefix string = '10.20.3.0/27'
 
-@description('Virtual network address space.')
-param vnetAddressPrefix string = '10.10.0.0/16'
 
-@description('Subnet name.')
-param subnetName string = 'subnet-app'
-
-@description('Subnet address range.')
-param subnetAddressPrefix string = '10.10.1.0/24'
-
-@description('Network Security Group name.')
-param nsgName string = 'nsg-az104-app'
-
-@description('Network interface name.')
-param nicName string = 'nic-az104-vm'
-
-@description('Virtual machine name.')
-param vmName string = 'vm-az104-ubuntu'
-
-@description('Virtual machine size.')
-param vmSize string = 'Standard_B1s'
-
-@description('Administrator username.')
-param adminUsername string = 'azureuser'
-
-@description('Deploy Azure Bastion for private VM administration.')
-param deployBastion bool = false
-
-@secure()
-@description('SSH public key used for the Linux VM.')
-param sshPublicKey string
-
-/*
-module storage './modules/storage.bicep' = {
-  name: 'storageModule'
-  params: {
-    location: location
-    environment: environment
-    storagePrefix: storagePrefix
-  }
-}
-*/
-
-/*
-module network './modules/network.bicep' = {
-  name: 'networkModule'
-  params: {
-    location: location
-    environment: environment
-    vnetName: vnetName
-    vnetAddressPrefix: vnetAddressPrefix
-    subnetName: subnetName
-    subnetAddressPrefix: subnetAddressPrefix
-    nsgName: nsgName
-  }
-}
-*/
+// ------------------------------------------------------
+// Existing compute network configuration + new PE subnet
+// ------------------------------------------------------
 
 module computeNetwork './modules/network.bicep' = {
   name: 'computeNetworkModule'
@@ -92,58 +34,37 @@ module computeNetwork './modules/network.bicep' = {
     subnetAddressPrefix: '10.20.1.0/24'
 
     bastionSubnetAddressPrefix: '10.20.2.0/26'
+    privateEndpointSubnetAddressPrefix: privateEndpointSubnetAddressPrefix
 
     nsgName: 'nsg-az104-compute'
   }
 }
 
-module bastion './modules/bastion.bicep' = if (deployBastion) {
-  name: 'bastionModule'
+
+// ------------------------------------------------------
+// Storage private endpoint + private DNS
+// ------------------------------------------------------
+
+module storagePrivateEndpoint './modules/storage-private-endpoint.bicep' = {
+  name: 'storagePrivateEndpointModule'
 
   params: {
     location: computeLocation
     environment: environment
-    bastionSubnetId: computeNetwork.outputs.bastionSubnetId
-  }
-}
-
-module compute './modules/compute.bicep' = {
-  name: 'computeModule'
-
-  params: {
-    location: computeLocation
-    environment: environment
-
-    nicName: nicName
-    subnetId: computeNetwork.outputs.subnetId
-
-    vmName: vmName
-    vmSize: vmSize
-    adminUsername: adminUsername
-    sshPublicKey: sshPublicKey
-  }
-}
-
-module rbac './modules/rbac.bicep' = {
-  name: 'rbacModule'
-
-  params: {
-    principalId: compute.outputs.principalId
-
-    principalResourceId: resourceId(
-      'Microsoft.Compute/virtualMachines',
-      vmName
-  )
 
     storageAccountName: storageAccountName
+
+    privateEndpointSubnetId: computeNetwork.outputs.privateEndpointSubnetId
+    vnetId: computeNetwork.outputs.vnetId
   }
 }
 
-/*
-output storageAccountName string = storage.outputs.storageAccountName
-*/
+
+// ------------------------------------------------------
+// Outputs
+// ------------------------------------------------------
 
 output environment string = environment
-output networkInterfaceName string = compute.outputs.nicName
-output virtualMachineName string = compute.outputs.vmName
-output virtualMachinePrincipalId string = compute.outputs.principalId
+output computeVnetName string = computeNetwork.outputs.vnetName
+output storagePrivateEndpointName string = storagePrivateEndpoint.outputs.privateEndpointName
+output storagePrivateDnsZoneName string = storagePrivateEndpoint.outputs.privateDnsZoneName

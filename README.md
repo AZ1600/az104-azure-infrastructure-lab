@@ -1,16 +1,30 @@
 # AZ-104 Azure Infrastructure Lab
 
-An Azure infrastructure project built while preparing for the Microsoft AZ-104 certification, demonstrating modular Bicep, private networking, Linux virtual machines, Azure Bastion, managed identities, scoped Azure RBAC, deployment review, troubleshooting, and operational verification.
+An Azure infrastructure project built while preparing for the Microsoft AZ-104 certification.
+
+The lab demonstrates modular Bicep, private networking, Linux virtual machines, Azure Bastion, managed identities, scoped Azure RBAC, Azure Private Link, Private DNS, deployment review, troubleshooting, and operational verification.
+
+---
 
 ## Project Overview
 
 This lab follows a repeatable infrastructure deployment workflow:
 
-**Build → Validate → What-If → Deploy → Verify**
+```text
+Build
+  ↓
+Validate
+  ↓
+What-If
+  ↓
+Deploy
+  ↓
+Verify
+```
 
-The project is developed incrementally, with infrastructure changes reviewed before deployment and validated with both Azure CLI and Azure Portal evidence.
+Infrastructure changes are developed incrementally and reviewed before deployment.
 
-Completed exercises include:
+The project currently demonstrates:
 
 - Modular Azure infrastructure using Bicep
 - Regional VM SKU troubleshooting
@@ -20,26 +34,31 @@ Completed exercises include:
 - Network Watcher connectivity validation
 - System-assigned managed identity
 - Scoped Azure RBAC
-- Credential-free access to Azure Blob Storage
+- Credential-free Azure Blob Storage access
 - Deterministic RBAC deployment through Bicep
-- Effective NSG and route-table troubleshooting
-- Cost-aware resource cleanup
+- Azure Storage Private Endpoint
+- Azure Private DNS
+- Private Blob name resolution
+- Managed identity access over Azure Private Link
+- ARM deployment-operation troubleshooting
+- Cost-aware VM deallocation
 
 The compute environment is deployed in Denmark East because an earlier UK South VM deployment encountered a subscription or regional SKU restriction.
 
 ---
 
-## Infrastructure
+# Infrastructure
 
 | Component | Configuration |
 |---|---|
 | Resource group | `rg-az104-arm-lab` |
 | Primary infrastructure region | UK South |
 | Compute region | Denmark East |
-| Virtual network | `vnet-az104-compute` |
+| Compute virtual network | `vnet-az104-compute` |
 | VNet address space | `10.20.0.0/16` |
 | Compute subnet | `subnet-compute` — `10.20.1.0/24` |
 | Bastion subnet | `AzureBastionSubnet` — `10.20.2.0/26` |
+| Private Endpoint subnet | `subnet-private-endpoints` — `10.20.3.0/27` |
 | Network security group | `nsg-az104-compute` |
 | Network interface | `nic-az104-compute` |
 | Virtual machine | `vm-az104-ubuntu` |
@@ -49,105 +68,144 @@ The compute environment is deployed in Denmark East because an earlier UK South 
 | VM authentication | SSH public key |
 | VM identity | System-assigned managed identity |
 | Bastion host | `bas-az104-compute` |
-| Bastion SKU | Basic |
 | Storage account | `az104lab2uvqlnnpoiad6` |
 | Storage RBAC role | `Storage Blob Data Reader` |
 | RBAC scope | Storage account |
+| Blob Private Endpoint | `pe-az104lab2uvqlnnpoiad6-blob` |
+| Private Endpoint IP | `10.20.3.4` |
+| Private DNS zone | `privatelink.blob.core.windows.net` |
 | Infrastructure as Code | Bicep |
 
 ---
 
-## Architecture
+# Architecture
 
 ```mermaid
 flowchart TB
-    User["Administrator / Browser"]
+    User["Administrator"]
 
     subgraph RG["rg-az104-arm-lab"]
 
-        subgraph Compute["Denmark East Compute Environment"]
+        subgraph Compute["Denmark East"]
             VNet["vnet-az104-compute<br/>10.20.0.0/16"]
 
-            BastionSubnet["AzureBastionSubnet<br/>10.20.2.0/26"]
             ComputeSubnet["subnet-compute<br/>10.20.1.0/24"]
+            BastionSubnet["AzureBastionSubnet<br/>10.20.2.0/26"]
+            PrivateEndpointSubnet["subnet-private-endpoints<br/>10.20.3.0/27"]
 
-            Bastion["Azure Bastion<br/>bas-az104-compute"]
             NSG["nsg-az104-compute"]
+            Bastion["Azure Bastion"]
+            NIC["nic-az104-compute"]
+            VM["vm-az104-ubuntu<br/>Ubuntu 24.04<br/>System-assigned identity"]
 
-            NIC["nic-az104-compute<br/>Private IP only"]
-            VM["vm-az104-ubuntu<br/>Ubuntu 24.04 LTS<br/>SystemAssigned Identity"]
-            Disk["Managed OS Disk"]
-
-            VNet --> BastionSubnet
             VNet --> ComputeSubnet
+            VNet --> BastionSubnet
+            VNet --> PrivateEndpointSubnet
 
             BastionSubnet --> Bastion
             ComputeSubnet --> NIC
             NIC --> VM
-            VM --> Disk
 
             NSG -. "TCP 22 from VirtualNetwork" .-> ComputeSubnet
         end
 
-        Storage["Azure Storage<br/>az104lab2uvqlnnpoiad6"]
-
-        RBAC["Storage Blob Data Reader<br/>Storage-account scope"]
+        RBAC["Storage Blob Data Reader"]
+        PE["Storage Blob Private Endpoint<br/>10.20.3.4"]
+        DNS["Private DNS<br/>privatelink.blob.core.windows.net"]
+        Storage["Azure Blob Storage<br/>az104lab2uvqlnnpoiad6"]
 
         VM -->|"Managed Identity"| RBAC
         RBAC --> Storage
+
+        VNet --> DNS
+        DNS --> PE
+        PrivateEndpointSubnet --> PE
+        PE --> Storage
     end
 
     User -->|"HTTPS"| Bastion
     Bastion -->|"Private TCP 22"| VM
 ```
 
-The VM does not have a public IP address.
+The VM has no public IP address.
 
-Azure Bastion provides private administrative access when enabled.
+Azure Bastion provides private administrative access when required.
 
-The VM also has a system-assigned managed identity that receives scoped read-only access to Blob Storage through Azure RBAC.
+The VM authenticates to Azure using its system-assigned managed identity.
+
+Azure RBAC authorizes the identity to read Blob data.
+
+Azure Private Link provides the private network path to Blob Storage.
+
+Azure Private DNS resolves the Storage Blob hostname to the private endpoint IP inside the VNet.
 
 ---
 
 # Security Model
 
-The project currently demonstrates several Azure security controls.
+The lab separates three different security concerns:
 
 ```text
-Administrator
-     |
-     | HTTPS
-     v
-Azure Bastion
-     |
-     | Private TCP 22
-     v
-Private Linux VM
-     |
-     | SystemAssigned Managed Identity
-     v
-Microsoft Entra ID
-     |
-     | Storage Blob Data Reader
-     v
-Azure Storage
+Authentication
+      |
+      | Who is making the request?
+      v
+System-assigned Managed Identity
+
+Authorization
+      |
+      | What may the identity do?
+      v
+Storage Blob Data Reader
+
+Network Connectivity
+      |
+      | How does the workload reach Storage?
+      v
+Private Endpoint + Private DNS
 ```
 
-Key security characteristics:
+The resulting access path is:
 
-- The VM has no public IP address.
-- Password-based SSH authentication is disabled.
-- SSH uses public-key authentication.
-- SSH private keys are never stored in Git.
-- TCP port 22 is limited to `VirtualNetwork`.
-- Azure Bastion provides the administrative network path.
-- The VM uses a system-assigned managed identity.
-- Storage authorization uses Azure RBAC.
-- No Storage account key is required by the VM.
-- No SAS token is required by the VM.
-- No application password or client secret is stored on the VM.
-- RBAC is scoped to the Storage account instead of the subscription.
-- Infrastructure changes are reviewed using Azure What-If before deployment.
+```text
+vm-az104-ubuntu
+        |
+        | Managed Identity
+        v
+Microsoft Entra ID
+        |
+        | Storage Blob Data Reader
+        v
+Azure Blob Storage
+        ^
+        |
+        | Azure Private Link
+        |
+10.20.3.4
+        ^
+        |
+Private DNS
+privatelink.blob.core.windows.net
+```
+
+Security characteristics include:
+
+- No VM public IP
+- Password-based SSH disabled
+- SSH public-key authentication
+- SSH private key remains outside Git
+- TCP 22 limited to the `VirtualNetwork` service tag
+- Azure Bastion used for administrative access
+- System-assigned managed identity
+- Storage authorization through Azure RBAC
+- Storage RBAC scoped to the Storage account
+- No Storage account key required by the VM
+- No SAS token required by the VM
+- No client secret stored on the VM
+- Blob traffic resolves to a private endpoint from the compute VNet
+- Infrastructure changes reviewed with Azure What-If
+
+The Storage account public-network configuration has not yet been fully disabled. This phase proves the private workload path first; restricting the public path is a later hardening exercise.
 
 ---
 
@@ -170,7 +228,9 @@ Key security characteristics:
 │   ├── rbac.bicep
 │   ├── rbac.json
 │   ├── storage.bicep
-│   └── storage.json
+│   ├── storage.json
+│   ├── storage-private-endpoint.bicep
+│   └── storage-private-endpoint.json
 │
 ├── docs/
 │   └── screenshots/
@@ -193,49 +253,76 @@ Key security characteristics:
 
 ## Pre-deployment What-If Review
 
-The original compute deployment was reviewed with Azure What-If before resources were created.
+Infrastructure changes are reviewed with Azure What-If before deployment.
 
-The preview was used to inspect proposed creations, modifications, deletions, and ignored resources before applying infrastructure changes.
+What-If is used to identify:
+
+```text
+Create
+Modify
+Delete
+NoChange
+Ignore
+```
+
+before infrastructure changes are applied.
 
 ![Pre-deployment What-If result](docs/screenshots/what-if.png)
 
-This screenshot represents an earlier stage of the lab. Later What-If results changed as additional infrastructure and RBAC resources were introduced.
+The screenshot represents an earlier stage of the project. Later What-If previews changed as managed identity, RBAC, and Private Endpoint resources were introduced.
 
 ---
 
 ## VM Verification and Deallocation
 
-The Linux VM was successfully provisioned in Denmark East using `Standard_B1s`.
+The Linux VM was successfully provisioned in Denmark East using:
 
-The VM does not have a public IP address.
+```text
+Standard_B1s
+```
 
-After validation exercises, it was deallocated to reduce unnecessary compute charges.
+The VM has no public IP address.
+
+After validation exercises, the VM is deallocated to reduce unnecessary compute charges.
 
 ![VM overview showing deallocated status](docs/screenshots/vm-deallocated.png)
-
-The VM is started only when required for validation exercises.
 
 ---
 
 ## Network Interface Configuration
 
-The compute NIC connects the VM to `subnet-compute` inside `vnet-az104-compute`.
+The compute NIC connects:
+
+```text
+vm-az104-ubuntu
+        ↓
+nic-az104-compute
+        ↓
+subnet-compute
+        ↓
+vnet-az104-compute
+```
 
 The NIC has no public IP association.
 
 ![Compute NIC configuration](docs/screenshots/nic-configuration.png)
 
-This confirms that the VM is not directly exposed to the public internet.
-
 ---
 
 ## SSH Security Rule
 
-The `Allow-SSH-From-VNet` NSG rule permits inbound TCP traffic on port 22 from the `VirtualNetwork` service tag with priority 100.
+The `Allow-SSH-From-VNet` NSG rule permits:
+
+```text
+Protocol: TCP
+Port: 22
+Source: VirtualNetwork
+Priority: 100
+```
 
 ![NSG SSH rule configuration](docs/screenshots/nsg-ssh-rule.png)
 
-Effective NSG rules were also inspected during troubleshooting to confirm the rule was active on the VM network path.
+Effective NSG rules were inspected during troubleshooting to verify that the rule was active on the VM network path.
 
 ---
 
@@ -243,7 +330,7 @@ Effective NSG rules were also inspected during troubleshooting to confirm the ru
 
 ## Bastion Network Design
 
-A dedicated subnet was added to the compute VNet:
+The compute VNet originally used:
 
 ```text
 vnet-az104-compute
@@ -256,9 +343,7 @@ vnet-az104-compute
     10.20.2.0/26
 ```
 
-Azure Bastion provides the management path to the VM while allowing the VM itself to remain private.
-
-The administrative path is:
+Azure Bastion provides a management path while allowing the VM itself to remain private.
 
 ```text
 Administrator Browser
@@ -277,9 +362,7 @@ Private IP only
 
 ## Bastion-to-VM Connectivity
 
-Azure Network Watcher Connection Troubleshoot was used to validate the private network path.
-
-The recorded test used:
+Azure Network Watcher Connection Troubleshoot was used to validate:
 
 ```text
 Source:
@@ -297,19 +380,15 @@ Destination port:
 
 The test reported the connection as reachable.
 
-Both the Bastion host and VM were reported as healthy.
-
 ![Bastion connectivity test](docs/screenshots/bastion-connectivity-test.png)
-
-This provided network-level evidence that Bastion could reach the VM over TCP port 22.
 
 ---
 
 ## Successful Bastion SSH Session
 
-A successful SSH session was established through Azure Bastion using SSH private-key authentication.
+A successful SSH session was established through Azure Bastion.
 
-Inside the VM, the following commands were executed:
+Commands executed inside the VM included:
 
 ```bash
 whoami
@@ -327,9 +406,7 @@ vm-az104-ubuntu
 
 ![Successful Bastion SSH session](docs/screenshots/bastion-ssh-success.png)
 
-This completed the private VM access milestone.
-
-The VM remained private throughout the exercise and did not require a public IP address.
+This completed the private VM administration milestone without assigning a public IP to the VM.
 
 ---
 
@@ -337,7 +414,7 @@ The VM remained private throughout the exercise and did not require a public IP 
 
 ## System-Assigned Managed Identity
 
-The VM is configured in Bicep with a system-assigned managed identity:
+The VM is configured with:
 
 ```bicep
 identity: {
@@ -349,34 +426,28 @@ Azure creates and manages the corresponding Microsoft Entra service principal.
 
 No client secret or application password is required.
 
-The compute module exposes the identity principal ID for use by other infrastructure modules.
-
 ---
 
 ## Scoped Storage RBAC
 
-A reusable RBAC module assigns the built-in:
+The VM identity receives:
 
 ```text
 Storage Blob Data Reader
 ```
 
-role to the VM managed identity.
-
-The assignment is scoped to the Storage account:
+at the Storage account scope:
 
 ```text
 az104lab2uvqlnnpoiad6
 ```
-
-rather than to the entire resource group or subscription.
 
 The relationship is:
 
 ```text
 vm-az104-ubuntu
       |
-      | SystemAssigned identity
+      | System-assigned identity
       v
 Storage Blob Data Reader
       |
@@ -387,49 +458,23 @@ az104lab2uvqlnnpoiad6
 
 ---
 
-## RBAC Bicep Module
+## Deterministic RBAC Bicep
 
-The RBAC configuration is managed through `modules/rbac.bicep`.
-
-The module accepts:
+The RBAC configuration is managed through:
 
 ```text
-principalId
-principalResourceId
-storageAccountName
+modules/rbac.bicep
 ```
 
-The role assignment uses a deterministic resource name generated from stable Azure resource IDs.
+The role assignment uses a deterministic resource name generated from stable Azure resource identifiers.
 
-This allows Azure What-If to identify the role assignment before deployment instead of reporting the resource as unsupported.
-
----
-
-## What-If RBAC Validation
-
-The final RBAC What-If preview identified the role assignment as a normal resource creation:
-
-```text
-Microsoft.Authorization/roleAssignments
-```
-
-rather than an unsupported deployment-time resource.
-
-The final preview reported:
-
-```text
-1 resource to create
-4 resources to deploy
-17 resources to ignore
-```
-
-with no unexpected delete operation.
+This allowed Azure What-If to identify the role assignment before deployment instead of treating the resource ID as unknown.
 
 ---
 
 ## Portal RBAC Verification
 
-Azure Portal IAM shows the VM managed identity with the following assignment:
+Azure Portal IAM confirmed:
 
 ```text
 Role:
@@ -447,99 +492,271 @@ This resource
 
 ![Managed identity RBAC assignment](docs/screenshots/managed-identity-rbac.png)
 
-This confirms that the authorization assignment exists at the intended Storage account scope.
-
 ---
 
-## Credential-Free Blob Access Test
+## Credential-Free Blob Access
 
-A test Blob object was created:
+The VM requested an Azure Storage access token through Azure Instance Metadata Service.
 
-```text
-identity-test/
-└── managed-identity-proof.txt
-```
+The token was then used to access Blob Storage.
 
-The VM requested an access token through Azure Instance Metadata Service:
-
-```text
-169.254.169.254
-```
-
-The access token was then used to access Azure Blob Storage.
-
-No token value was printed or stored in the repository.
-
-The test command returned:
-
-```text
-Managed identity access confirmed from vm-az104-ubuntu
-```
+No Storage key, SAS token, password, connection string, or client secret was required.
 
 ![Managed identity Storage access](docs/screenshots/managed-identity-storage-access.png)
 
-This confirms that the VM can access Blob Storage using:
+This proved:
 
 ```text
-System-assigned managed identity
+Managed Identity
         +
 Microsoft Entra authentication
         +
-Storage Blob Data Reader
+Azure RBAC
 ```
 
-without using:
+---
+
+# Phase 3 — Private Storage Connectivity
+
+## Private Endpoint Network Design
+
+A third subnet was introduced:
 
 ```text
-Storage account key
-SAS token
-Connection string
-Password
-Client secret
+vnet-az104-compute
+10.20.0.0/16
+
+├── subnet-compute
+│   └── 10.20.1.0/24
+│
+├── AzureBastionSubnet
+│   └── 10.20.2.0/26
+│
+└── subnet-private-endpoints
+    └── 10.20.3.0/27
 ```
+
+The new subnet is dedicated to private endpoints.
+
+The Blob Private Endpoint is:
+
+```text
+pe-az104lab2uvqlnnpoiad6-blob
+```
+
+with private IP:
+
+```text
+10.20.3.4
+```
+
+---
+
+## Private DNS
+
+The deployment creates the Azure Private DNS zone:
+
+```text
+privatelink.blob.core.windows.net
+```
+
+The zone is linked to:
+
+```text
+vnet-az104-compute
+```
+
+The Private Endpoint also has a DNS zone group associating it with the Blob Private DNS zone.
+
+---
+
+## Private Endpoint Validation
+
+Azure reported:
+
+```text
+ProvisioningState    ConnectionState
+-------------------  ---------------
+Succeeded            Approved
+```
+
+The private endpoint NIC received:
+
+```text
+10.20.3.4
+```
+
+The Private DNS zone was verified as:
+
+```text
+Name:
+privatelink.blob.core.windows.net
+
+Location:
+global
+```
+
+---
+
+## Private DNS Resolution from the VM
+
+Private DNS was tested from:
+
+```text
+vm-az104-ubuntu
+```
+
+The normal Storage hostname:
+
+```text
+az104lab2uvqlnnpoiad6.blob.core.windows.net
+```
+
+resolved through:
+
+```text
+az104lab2uvqlnnpoiad6.privatelink.blob.core.windows.net
+```
+
+to:
+
+```text
+10.20.3.4
+```
+
+This confirmed that the VM resolved Azure Blob Storage to the private endpoint rather than using the normal public service IP.
+
+---
+
+## Managed Identity Access over Private Link
+
+The VM requested an OAuth token from Azure Instance Metadata Service.
+
+The token was used against:
+
+```text
+https://az104lab2uvqlnnpoiad6.blob.core.windows.net/
+```
+
+The request returned:
+
+```text
+HTTP/1.1 200 OK
+```
+
+and successfully listed the existing:
+
+```text
+identity-test
+```
+
+container.
+
+This verified all three layers together:
+
+```text
+Authentication
+    |
+    +--> System-assigned managed identity
+
+Authorization
+    |
+    +--> Storage Blob Data Reader
+
+Network
+    |
+    +--> Private DNS
+    +--> Private Endpoint
+    +--> 10.20.3.4
+```
+
+---
+
+## Partial Deployment Failure and Recovery
+
+The first Private Storage deployment ended with an overall failure.
+
+The failure was not caused by the Private Endpoint.
+
+The active deployment also attempted to redeploy the existing VM using a different SSH public key.
+
+Azure rejected the change:
+
+```text
+PropertyChangeNotAllowed
+
+Changing property
+'linuxConfiguration.ssh.publicKeys'
+is not allowed.
+```
+
+Deployment operations were inspected using Azure CLI.
+
+The results showed:
+
+```text
+storagePrivateEndpointModule    Succeeded
+computeNetworkModule            Succeeded
+computeModule                   Failed
+```
+
+This proved that the Storage Private Endpoint and network changes had already completed successfully before the unrelated VM update failed.
+
+The deployment template was then narrowed so that this phase no longer redeploys the existing VM or RBAC configuration.
+
+This keeps the active deployment focused on:
+
+```text
+Compute VNet configuration
+Private Endpoint subnet
+Storage Private Endpoint
+Private DNS
+VNet DNS link
+```
+
+---
+
+# Current Active Deployment Scope
+
+The current `azuredeploy.bicep` is intentionally focused on the Private Storage networking phase.
+
+It manages:
+
+```text
+vnet-az104-compute
+        |
+        +--> subnet-compute
+        |
+        +--> AzureBastionSubnet
+        |
+        +--> subnet-private-endpoints
+
+Storage Private Endpoint
+
+Private DNS Zone
+
+Private DNS VNet Link
+
+Private DNS Zone Group
+```
+
+The VM, Bastion implementation, and RBAC modules remain in the repository as completed project phases, but they are not redeployed by the current root template.
+
+This avoids modifying already validated resources unnecessarily.
 
 ---
 
 # Deployment Workflow
 
-## Prerequisites
-
-- Azure CLI
-- Azure CLI Bicep support
-- Azure subscription
-- Required Azure deployment permissions
-- Target resource group
-- SSH key pair
-- Public SSH key available through an environment variable
-- VM SKU available in the selected region
-
-Set the SSH public key before validation or deployment:
-
-```bash
-export AZ104_SSH_PUBLIC_KEY="$(cat ~/.ssh/az104_lab_ed25519.pub)"
-```
-
-Only the public key is passed into Bicep.
-
-The private key remains on the local workstation and must never be committed to Git.
-
----
-
 ## 1. Build
-
-Build the complete deployment:
-
-```bash
-az bicep build --file azuredeploy.bicep
-```
-
-Individual modules can also be validated independently:
 
 ```bash
 az bicep build --file modules/network.bicep
-az bicep build --file modules/compute.bicep
-az bicep build --file modules/bastion.bicep
-az bicep build --file modules/rbac.bicep
+
+az bicep build \
+  --file modules/storage-private-endpoint.bicep
+
+az bicep build --file azuredeploy.bicep
 ```
 
 ---
@@ -549,31 +766,30 @@ az bicep build --file modules/rbac.bicep
 ```bash
 az deployment group validate \
   --resource-group rg-az104-arm-lab \
+  --template-file azuredeploy.bicep \
   --parameters dev.bicepparam
 ```
-
-Validation diagnostics are reviewed rather than relying only on the final success state.
 
 ---
 
-## 3. Preview Changes
+## 3. What-If
 
 ```bash
 az deployment group what-if \
   --resource-group rg-az104-arm-lab \
+  --template-file azuredeploy.bicep \
   --parameters dev.bicepparam
 ```
 
-A resource-only preview can also be generated:
+What-If is reviewed for unexpected:
 
-```bash
-az deployment group what-if \
-  --resource-group rg-az104-arm-lab \
-  --parameters dev.bicepparam \
-  --result-format ResourceIdOnly
+```text
+Deletes
+Replacements
+Unrelated modifications
 ```
 
-What-If is reviewed before applying infrastructure changes.
+before deployment.
 
 ---
 
@@ -582,16 +798,87 @@ What-If is reviewed before applying infrastructure changes.
 ```bash
 az deployment group create \
   --resource-group rg-az104-arm-lab \
+  --name az104-private-storage \
+  --template-file azuredeploy.bicep \
   --parameters dev.bicepparam
 ```
 
-Azure deployments can create billable resources.
-
-The deployment preview is therefore reviewed before running this command.
+Azure deployments can create billable resources, so deployment previews are reviewed before applying changes.
 
 ---
 
 # Verification Commands
+
+## Verify the Private Endpoint
+
+```bash
+az network private-endpoint show \
+  --resource-group rg-az104-arm-lab \
+  --name pe-az104lab2uvqlnnpoiad6-blob \
+  --query "{ProvisioningState:provisioningState,ConnectionState:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status}" \
+  --output table
+```
+
+Expected:
+
+```text
+Succeeded    Approved
+```
+
+---
+
+## Verify the Private Endpoint IP
+
+```bash
+NIC_ID=$(az network private-endpoint show \
+  --resource-group rg-az104-arm-lab \
+  --name pe-az104lab2uvqlnnpoiad6-blob \
+  --query "networkInterfaces[0].id" \
+  --output tsv)
+
+az network nic show \
+  --ids "$NIC_ID" \
+  --query "ipConfigurations[0].privateIPAddress" \
+  --output tsv
+```
+
+Expected:
+
+```text
+10.20.3.4
+```
+
+---
+
+## Verify Private DNS
+
+```bash
+az network private-dns zone show \
+  --resource-group rg-az104-arm-lab \
+  --name privatelink.blob.core.windows.net \
+  --query "{Name:name,Location:location}" \
+  --output table
+```
+
+---
+
+## Verify DNS from the VM
+
+```bash
+az vm run-command invoke \
+  --resource-group rg-az104-arm-lab \
+  --name vm-az104-ubuntu \
+  --command-id RunShellScript \
+  --scripts "getent hosts az104lab2uvqlnnpoiad6.blob.core.windows.net"
+```
+
+Expected private address:
+
+```text
+10.20.3.4
+```
+
+---
 
 ## Verify the VM
 
@@ -616,42 +903,10 @@ az vm identity show \
   --output table
 ```
 
-Expected identity type:
+Expected:
 
 ```text
 SystemAssigned
-```
-
----
-
-## Verify Storage RBAC
-
-```bash
-az role assignment list \
-  --assignee <VM_MANAGED_IDENTITY_PRINCIPAL_ID> \
-  --scope "$STORAGE_ID" \
-  --query "[?roleDefinitionName=='Storage Blob Data Reader'].{Role:roleDefinitionName,PrincipalType:principalType,Scope:scope}" \
-  --output table
-```
-
-Expected role:
-
-```text
-Storage Blob Data Reader
-```
-
----
-
-## Verify Bastion
-
-When Bastion is deployed:
-
-```bash
-az network bastion show \
-  --resource-group rg-az104-arm-lab \
-  --name bas-az104-compute \
-  --query "{Name:name,Location:location,ProvisioningState:provisioningState,Sku:sku.name}" \
-  --output table
 ```
 
 ---
@@ -669,9 +924,26 @@ az network vnet subnet list \
 Expected:
 
 ```text
-subnet-compute       10.20.1.0/24
-AzureBastionSubnet   10.20.2.0/26
+subnet-compute              10.20.1.0/24
+AzureBastionSubnet          10.20.2.0/26
+subnet-private-endpoints    10.20.3.0/27
 ```
+
+---
+
+## Inspect Deployment Operations
+
+If a deployment fails:
+
+```bash
+az deployment operation group list \
+  --resource-group rg-az104-arm-lab \
+  --name az104-private-storage \
+  --query "[].{Resource:properties.targetResource.resourceName,Type:properties.targetResource.resourceType,State:properties.provisioningState}" \
+  --output table
+```
+
+This helps identify which nested resources succeeded and which failed.
 
 ---
 
@@ -683,7 +955,7 @@ The original compute deployment attempted to use UK South.
 
 The selected VM SKU was unavailable or restricted for the subscription in that region.
 
-Instead of modifying unrelated infrastructure, a separate:
+A separate:
 
 ```text
 computeLocation
@@ -693,102 +965,15 @@ parameter was introduced.
 
 The compute environment was successfully deployed in Denmark East.
 
-This demonstrated the importance of distinguishing:
-
-```text
-Infrastructure-code failure
-```
-
-from:
-
-```text
-Azure regional or subscription availability constraints
-```
+This demonstrated the importance of distinguishing an infrastructure-code problem from a regional or subscription availability constraint.
 
 ---
 
-## Protecting Existing Resources
+## Bastion Troubleshooting
 
-The resource group already contained infrastructure unrelated to the compute exercise.
+Initial Bastion browser sessions failed before a working SSH session was established.
 
-The deployment therefore used incremental deployment mode and Azure What-If to review potential changes before deployment.
-
-Resources omitted from the template remained in Azure.
-
-Resources included in the template were still treated carefully because incremental mode can modify them.
-
----
-
-## NIC What-If Differences
-
-A later What-If operation reported differences on the NIC involving Azure-managed or default properties such as:
-
-```text
-privateIPAddress
-privateIPAddressVersion
-kind
-auxiliaryMode
-```
-
-These differences were investigated before applying any change.
-
-This reinforced that What-If output should be interpreted rather than blindly applied.
-
----
-
-## Bastion Connection Troubleshooting
-
-Initial Bastion browser sessions failed before a working SSH terminal was established.
-
-Troubleshooting was performed layer by layer.
-
-### SSH service
-
-Azure Run Command confirmed that TCP port 22 was listening on the VM.
-
-### SSH key
-
-The local public-key fingerprint was compared with the fingerprint stored in:
-
-```text
-/home/azureuser/.ssh/authorized_keys
-```
-
-The fingerprints matched.
-
-### Effective NSG
-
-The VM's effective NSG showed:
-
-```text
-Priority: 100
-Access: Allow
-Source: VirtualNetwork
-Destination port: 22
-```
-
-### Effective route table
-
-The VM NIC showed:
-
-```text
-10.20.0.0/16
-Next hop: VnetLocal
-```
-
-which confirmed local VNet routing between the Bastion and compute subnets.
-
-### Network Watcher
-
-Connection Troubleshoot confirmed the Bastion-to-VM TCP/22 path was healthy.
-
-### Final cause
-
-The browser file picker was initially using the wrong local SSH private-key file.
-
-After selecting the correct dedicated private key, the Bastion SSH session succeeded.
-
-The troubleshooting sequence demonstrated the value of separating:
+Troubleshooting separated:
 
 ```text
 Network reachability
@@ -804,63 +989,83 @@ Authentication
 Client configuration
 ```
 
+Network Watcher confirmed the TCP/22 path was healthy.
+
+The final problem was that the browser file picker had selected the wrong local SSH private key.
+
+After choosing the correct key, SSH succeeded.
+
 ---
 
-## Managed Identity Authentication
+## Managed Identity and RBAC
 
-The VM managed identity obtains an OAuth access token from Azure Instance Metadata Service.
-
-The token request uses:
+Managed identity answers:
 
 ```text
-http://169.254.169.254/metadata/identity/oauth2/token
+Who is the VM?
 ```
 
-The token is scoped for Azure Storage and is used to authenticate the Blob request.
-
-The access token itself is not printed or stored.
-
----
-
-## RBAC Authorization
-
-Authentication and authorization are treated separately.
+Azure RBAC answers:
 
 ```text
-Managed identity
-    =
-Who is the VM?
-
-Azure RBAC
-    =
 What is the VM allowed to do?
 ```
 
-The VM identity is authorized with:
+The VM identity receives:
 
 ```text
 Storage Blob Data Reader
 ```
 
-which allows read-only Blob data access at the selected Storage account scope.
+at the Storage account scope.
 
 ---
 
-## Deterministic Role Assignment
+## Private Endpoint and Private DNS
 
-The first RBAC Bicep implementation generated the role assignment name using a deployment-time managed identity principal ID.
+Private Endpoint answers:
 
-Azure What-If could not calculate the resulting resource ID and reported the role assignment as unsupported.
+```text
+Which private network path reaches the service?
+```
 
-The design was changed so that the deterministic role-assignment GUID is based on stable Azure resource identifiers while the managed identity principal ID is used only as the RBAC assignee.
+Private DNS answers:
 
-After this change, What-If identified the role assignment as a normal resource creation.
+```text
+How does the workload discover that private path?
+```
+
+Both are required for the intended Private Link experience.
+
+---
+
+## ARM Partial Success
+
+The Private Storage deployment demonstrated that a top-level ARM deployment can fail while some nested deployments have already succeeded.
+
+The correct response was not to immediately delete or redeploy everything.
+
+Instead, deployment operations and actual Azure resource states were inspected first.
+
+---
+
+## Immutable VM Configuration
+
+The deployment attempted to change:
+
+```text
+linuxConfiguration.ssh.publicKeys
+```
+
+on the existing VM.
+
+Azure rejected this in-place modification.
+
+The solution was to remove the unrelated compute deployment from the active Private Storage root template rather than recreating the VM.
 
 ---
 
 # Cost Management
-
-## VM
 
 The VM is deallocated when it is not required:
 
@@ -876,52 +1081,19 @@ Verify:
 az vm get-instance-view \
   --resource-group rg-az104-arm-lab \
   --name vm-az104-ubuntu \
-  --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" \
+  --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus" \
   --output tsv
 ```
 
-Expected result:
+Expected:
 
 ```text
 VM deallocated
 ```
 
-Managed disks and some related resources can still incur charges while the VM is deallocated.
+Managed disks and some networking resources can continue to incur charges while compute is deallocated.
 
----
-
-## Azure Bastion
-
-Azure Bastion is also a billable resource.
-
-The deployment therefore uses:
-
-```bicep
-param deployBastion bool = false
-```
-
-by default.
-
-Bastion is enabled only when required for validation.
-
-After the private-access exercise, the Bastion host can be removed:
-
-```bash
-az network bastion delete \
-  --resource-group rg-az104-arm-lab \
-  --name bas-az104-compute \
-  --yes
-```
-
-Its public IP can also be deleted:
-
-```bash
-az network public-ip delete \
-  --resource-group rg-az104-arm-lab \
-  --name pip-bas-az104-compute
-```
-
-The `AzureBastionSubnet` can remain in the VNet for future Bastion deployments.
+Azure Bastion and Private Endpoint resources can also have associated costs, so temporary lab resources should be reviewed after each exercise.
 
 ---
 
@@ -932,106 +1104,98 @@ The `AzureBastionSubnet` can remain in the VNet for future Bastion deployments.
 [Complete] Private Linux VM
 [Complete] No VM public IP
 [Complete] SSH public-key authentication
-[Complete] NSG rule validation
+[Complete] NSG validation
 [Complete] Azure Bastion deployment
 [Complete] Private Bastion SSH session
 [Complete] Network Watcher validation
 [Complete] System-assigned managed identity
 [Complete] Storage Blob Data Reader RBAC
-[Complete] RBAC managed through Bicep
-[Complete] Credential-free Blob read
+[Complete] Deterministic RBAC through Bicep
+[Complete] Credential-free Blob access
+[Complete] Private Endpoint subnet
+[Complete] Azure Storage Blob Private Endpoint
+[Complete] Private DNS zone
+[Complete] VNet Private DNS link
+[Complete] Private Blob name resolution
+[Complete] Managed identity access over Private Link
+[Complete] ARM partial-failure investigation
+[Complete] VM deallocation after validation
 
-[Next] Storage Private Endpoint
-[Next] Azure Private DNS
-[Next] Azure Monitor
+[Next] Storage public-network hardening review
+[Next] Azure Monitor Agent
 [Next] Log Analytics
+[Next] Data Collection Rules
 [Next] KQL queries
-[Next] Azure Monitor alert
+[Next] Azure Monitor alerts
 [Next] Azure Policy
 [Next] Backup and recovery
-[Next] GitHub Actions Bicep CI
+[Next] GitHub Actions Bicep validation
+[Next] Pull Request What-If
 [Next] GitHub-to-Azure OIDC
 ```
 
 ---
 
-# Next Phase — Private Storage Connectivity
+# Next Phase — Azure Monitoring and Operations
 
-The next phase will evolve the current Storage access path.
+The next major phase will introduce Azure-native monitoring.
 
-The VM already uses managed identity and Azure RBAC for authentication and authorization.
-
-The next step is to make the network path private as well:
+Planned components include:
 
 ```text
-vm-az104-ubuntu
-        |
-        | Managed Identity
-        |
-        v
-Storage Blob Data Reader
-
-        +
-
-vm-az104-ubuntu
-        |
-        | Private VNet
-        v
-Storage Private Endpoint
-        |
-        v
-Azure Storage
+Azure Monitor Agent
+        ↓
+Data Collection Rule
+        ↓
+Log Analytics Workspace
+        ↓
+KQL Queries
+        ↓
+Azure Monitor Alerts
 ```
 
-Planned additions include:
+The goal is to move from:
 
 ```text
-Private Endpoint
-Private DNS Zone
-privatelink.blob.core.windows.net
-VNet DNS link
-Private name resolution
-Storage public-network review
+Infrastructure exists
 ```
 
-This will separate three different security concerns:
+to:
 
 ```text
-Authentication
-Authorization
-Network connectivity
+Infrastructure is observable and operationally verifiable
 ```
 
 ---
 
 # Future Work
 
-After private Storage connectivity, the lab will continue with:
+Future exercises include:
 
+- Storage public-network hardening review
 - Azure Monitor Agent
-- Log Analytics workspace integration
+- Log Analytics workspace
 - Data Collection Rules
 - VM metrics and guest logs
 - KQL queries
 - Azure Monitor alerts
-- Azure Policy definition and assignment
+- Azure Policy definitions and assignments
 - deliberate policy non-compliance testing
 - policy remediation
 - Recovery Services Vault
 - VM backup
-- recovery point validation
+- recovery-point validation
 - restore testing
 - GitHub Actions Bicep validation
 - Pull Request What-If
 - Azure authentication through GitHub OIDC
-- removal of remaining unused Bicep parameters
 - continued module cleanup and refactoring
 
 ---
 
 # Learning Notes
 
-See [learn.md](learn.md) for troubleshooting decisions, deployment observations, and lessons learned throughout the lab.
+See [learn.md](learn.md) for detailed troubleshooting decisions, deployment observations, and lessons learned throughout the lab.
 
 ---
 
