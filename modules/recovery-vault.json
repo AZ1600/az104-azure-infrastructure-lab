@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.47.16.16243",
+      "templateHash": "579111262128529801"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region for the Recovery Services vault."
+      }
+    },
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Deployment environment."
+      }
+    },
+    "vaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Recovery Services vault name."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.RecoveryServices/vaults",
+      "apiVersion": "2026-01-01",
+      "name": "[parameters('vaultName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "Environment": "[parameters('environment')]",
+        "ManagedBy": "Bicep",
+        "Project": "AZ104-Lab"
+      },
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicNetworkAccess": "Enabled"
+      }
+    }
+  ],
+  "outputs": {
+    "vaultId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.RecoveryServices/vaults', parameters('vaultName'))]"
+    },
+    "vaultName": {
+      "type": "string",
+      "value": "[parameters('vaultName')]"
+    },
+    "vaultLocation": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.RecoveryServices/vaults', parameters('vaultName')), '2026-01-01', 'full').location]"
+    }
+  }
+}

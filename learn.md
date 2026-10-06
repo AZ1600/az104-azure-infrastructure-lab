@@ -640,6 +640,619 @@ Disabling public access before proving the private path would make troubleshooti
 
 ---
 
+## 24. Verify the Local Repository Before Running Git Commands
+
+At the beginning of the Backup and Recovery phase, I initially assumed the
+repository existed directly under my home directory:
+
+```text
+~/az104-azure-infrastructure-lab
+```
+
+The actual repository was:
+
+```text
+~/az104-labs/az104-azure-infrastructure-lab
+```
+
+Running Git commands from the wrong directory produced:
+
+```text
+fatal: not a git repository
+```
+
+The correct repository location was verified with:
+
+```bash
+pwd
+git rev-parse --show-toplevel
+git status
+```
+
+This reinforced an important operational habit:
+
+```text
+Repository name
+    !=
+Guaranteed local filesystem path
+```
+
+Before making changes, verify the actual working directory and Git root.
+
+---
+
+## 25. Azure Resource Provider Registration Is Subscription State
+
+Before creating Recovery Services resources, I checked:
+
+```bash
+az provider show \
+  --namespace Microsoft.RecoveryServices \
+  --query registrationState \
+  --output tsv
+```
+
+Azure returned:
+
+```text
+NotRegistered
+```
+
+The Bicep template was not the problem.
+
+The Azure subscription had not yet registered:
+
+```text
+Microsoft.RecoveryServices
+```
+
+The provider was registered using:
+
+```bash
+az provider register \
+  --namespace Microsoft.RecoveryServices \
+  --wait
+```
+
+After registration Azure returned:
+
+```text
+Registered
+```
+
+This demonstrated that infrastructure deployment depends on more than valid
+template syntax.
+
+The dependency chain is:
+
+```text
+Valid Bicep
+    |
+    v
+Registered Azure resource provider
+    |
+    v
+Correct permissions and subscription state
+    |
+    v
+Resource deployment
+```
+
+A valid Bicep template can still fail when the subscription is not enabled for
+the required resource type.
+
+---
+
+## 26. Backup Infrastructure Was Isolated from the Existing Deployment
+
+An earlier project phase demonstrated the risk of redeploying unrelated
+resources together.
+
+During the Private Endpoint work, the root deployment also attempted to modify
+the existing VM and Azure rejected an immutable SSH-key change.
+
+For Backup and Recovery I therefore created a separate deployment path:
+
+```text
+backup.bicep
+backup.dev.bicepparam
+modules/recovery-vault.bicep
+```
+
+The backup deployment does not manage:
+
+```text
+VM configuration
+Bastion
+Storage
+Private Endpoint
+Private DNS
+RBAC
+```
+
+This reduces blast radius and makes each infrastructure change easier to
+understand.
+
+---
+
+## 27. What-If Confirmed the Backup Deployment Scope
+
+Before deploying the Recovery Services vault I ran:
+
+```bash
+az deployment group what-if \
+  --resource-group rg-az104-arm-lab \
+  --template-file backup.bicep \
+  --parameters backup.dev.bicepparam
+```
+
+Azure reported:
+
+```text
+Resource changes: 1 to create, 36 to ignore
+```
+
+The only resource to be created was:
+
+```text
+Microsoft.RecoveryServices/vaults/rsv-az104-backup-denmarkeast
+```
+
+The existing resources displayed as `Ignore` because they existed in the
+resource group but were outside this deployment's management scope.
+
+The important distinction was:
+
+```text
+Ignore
+    !=
+Modify
+```
+
+The What-If evidence showed that the deployment would not change the existing
+VM, networking, PropertyOps resources, Storage resources, or Private
+Endpoints.
+
+---
+
+## 28. Recovery Services Vault Deployment
+
+The Recovery Services vault was created as:
+
+```text
+rsv-az104-backup-denmarkeast
+```
+
+in:
+
+```text
+denmarkeast
+```
+
+This matches the region containing:
+
+```text
+vm-az104-ubuntu
+```
+
+Verification showed:
+
+```text
+ProvisioningState:   Succeeded
+PublicNetworkAccess: Enabled
+Location:            denmarkeast
+```
+
+The vault exposed two Azure IaaS VM policies:
+
+```text
+DefaultPolicy
+EnhancedPolicy
+```
+
+This exercise used:
+
+```text
+DefaultPolicy
+```
+
+---
+
+## 29. Backup Protection and Recovery Points Are Different States
+
+Before protection was enabled:
+
+```bash
+az backup protection check-vm \
+  --resource-group rg-az104-arm-lab \
+  --vm vm-az104-ubuntu
+```
+
+returned no Recovery Services vault.
+
+Protection was then enabled using:
+
+```bash
+az backup protection enable-for-vm \
+  --resource-group rg-az104-arm-lab \
+  --vault-name rsv-az104-backup-denmarkeast \
+  --vm vm-az104-ubuntu \
+  --policy-name DefaultPolicy
+```
+
+The ConfigureBackup job completed successfully.
+
+However, the protected item initially reported:
+
+```text
+ProtectionState: IRPending
+Health:          Passed
+LastBackupTime:  2001-01-01T00:00:00+00:00
+```
+
+This showed that:
+
+```text
+Backup configuration exists
+        !=
+Recovery point exists
+```
+
+The VM had been registered for protection, but no initial recovery point had
+completed yet.
+
+---
+
+## 30. `IRPending` Identified the Missing Initial Recovery Point
+
+The state:
+
+```text
+IRPending
+```
+
+meant the initial backup had not completed.
+
+The placeholder timestamp:
+
+```text
+2001-01-01T00:00:00+00:00
+```
+
+was another indication that there was not yet a successful backup.
+
+This prevented me from treating:
+
+```text
+Protection enabled
+```
+
+as equivalent to:
+
+```text
+Recoverable backup exists
+```
+
+---
+
+## 31. On-Demand Backup Created the First Recovery Point
+
+An on-demand backup was triggered for:
+
+```text
+vm-az104-ubuntu
+```
+
+The backup job initially reported:
+
+```text
+Backup
+InProgress
+```
+
+Rather than repeatedly checking manually, the active job was identified and
+Azure CLI was used to wait for completion.
+
+The final job reported:
+
+```text
+Operation: Backup
+Status:    Completed
+Progress:  100%
+Backup Size: 3521 MB
+```
+
+Its internal stages included:
+
+```text
+Take Snapshot        Completed
+Transfer data        Completed
+Validate Backup      Completed
+```
+
+This was stronger evidence than simply seeing backup configuration in the
+vault.
+
+---
+
+## 32. The Recovery Point Was Verified Directly
+
+After the backup completed, recovery points were queried.
+
+Azure returned:
+
+```text
+RecoveryPoint:
+9138012723089140609
+
+Time:
+2026-10-06T15:02:00.270798+00:00
+
+Type:
+CrashConsistent
+```
+
+The protected item reported:
+
+```text
+ProtectionState:  Protected
+Health:           Passed
+LastBackupStatus: Completed
+LastBackupTime:   2026-10-06T15:01:51.998475+00:00
+```
+
+The recovery point type observed in this exercise was:
+
+```text
+CrashConsistent
+```
+
+I recorded the actual consistency type rather than assuming application
+consistency.
+
+---
+
+## 33. Backup Success Is Not the Same as Restore Validation
+
+A successful backup proves that Azure stored a recovery point.
+
+It does not prove that the restore workflow has been tested.
+
+The next validation therefore used an isolated temporary resource group:
+
+```text
+rg-az104-restore-lab
+```
+
+A temporary staging Storage account was also created in:
+
+```text
+denmarkeast
+```
+
+The latest recovery point was selected programmatically instead of manually
+copying its identifier.
+
+The restore used:
+
+```text
+AlternateLocation
+```
+
+and:
+
+```text
+restore-only-osdisk
+```
+
+This allowed recovery testing without replacing the original VM.
+
+---
+
+## 34. Alternate-Location Disk Restore Completed Successfully
+
+The restore job reported:
+
+```text
+Operation: Restore
+Status:    Completed
+Duration:  approximately 1 minute 7 seconds
+```
+
+The restored managed disk was:
+
+```text
+vmaz104ubuntu-osdisk-20261006-153823
+```
+
+Azure reported:
+
+```text
+Location:           denmarkeast
+SKU:                Standard_LRS
+State:              Unattached
+ProvisioningState:  Succeeded
+```
+
+The `Unattached` state was useful evidence.
+
+It confirmed that the restore had created an independent disk instead of
+silently replacing or attaching it to the source VM.
+
+---
+
+## 35. The Original VM Was Verified After the Restore
+
+After restoring the OS disk, the original VM was checked again.
+
+Azure reported:
+
+```text
+Name:               vm-az104-ubuntu
+Location:           denmarkeast
+ProvisioningState:  Succeeded
+PowerState:         VM deallocated
+PrivateIP:          10.20.1.4
+PublicIP:           None
+```
+
+This demonstrated:
+
+```text
+Recovery point exists
+        +
+Restore completed
+        +
+Restored disk exists
+        +
+Original VM unchanged
+        =
+Non-destructive recovery validation
+```
+
+---
+
+## 36. Temporary Restore Resources Were Cleaned Up
+
+After validation, the temporary restore resource group was deleted:
+
+```bash
+az group delete \
+  --name rg-az104-restore-lab \
+  --yes \
+  --no-wait
+```
+
+The first status check showed:
+
+```text
+Deleting
+```
+
+A later check returned:
+
+```text
+ResourceGroupNotFound
+```
+
+In this context, `ResourceGroupNotFound` was the expected success condition.
+
+It proved that:
+
+```text
+rg-az104-restore-lab
+```
+
+had been fully removed.
+
+This is an important troubleshooting principle:
+
+```text
+An error-looking response
+    !=
+Always a failure
+```
+
+The result must be interpreted in the context of the operation being verified.
+
+When the desired state is:
+
+```text
+resource no longer exists
+```
+
+then:
+
+```text
+ResourceGroupNotFound
+```
+
+is valid evidence of successful cleanup.
+
+---
+
+## 37. Backup and Recovery Require Multiple Layers of Evidence
+
+This exercise demonstrated several distinct states:
+
+```text
+Vault exists
+    !=
+VM protected
+
+VM protected
+    !=
+Recovery point exists
+
+Recovery point exists
+    !=
+Restore works
+
+Restore completed
+    !=
+Restored resource verified
+```
+
+The full validation path was:
+
+```text
+Register Microsoft.RecoveryServices
+        |
+        v
+Build Bicep
+        |
+        v
+Validate deployment
+        |
+        v
+What-If
+        |
+        v
+Deploy Recovery Services vault
+        |
+        v
+Inspect backup policies
+        |
+        v
+Enable VM protection
+        |
+        v
+Observe IRPending
+        |
+        v
+Trigger on-demand backup
+        |
+        v
+Wait for Backup Completed
+        |
+        v
+Verify recovery point
+        |
+        v
+Restore OS disk to alternate location
+        |
+        v
+Verify restored managed disk
+        |
+        v
+Verify original VM unchanged
+        |
+        v
+Delete temporary restore environment
+```
+
+The important engineering lesson is:
+
+```text
+Backup configured
+        !=
+Recovery proven
+```
+
+Recovery is only meaningfully validated after restore behaviour is tested.
+
+---
+
 # Current Evidence
 
 The project has now recorded successful validation for:
@@ -668,19 +1281,58 @@ Managed identity access through Private Link
 HTTP 200 Blob API response
 ARM partial-deployment investigation
 VM deallocation
+Microsoft.RecoveryServices provider registration
+Recovery Services vault deployment
+VM backup policy inspection
+VM backup protection
+IRPending state investigation
+On-demand VM backup
+Completed initial backup
+Crash-consistent recovery point
+Recovery-point inspection
+Alternate-location OS disk restore
+Restored managed disk verification
+Original VM post-restore verification
+Temporary restore-resource cleanup
 ```
 
 Still to explore:
 
 ```text
-Storage public-network hardening
+Microsoft Entra users and groups
+External users
+Self-service password reset
+Azure Policy assignment and compliance
+Resource locks
+Management groups
+Budgets and cost alerts
+Azure Advisor
+Storage SAS
+Stored access policies
+Storage access keys
+Azure Files
+Storage redundancy options
+AzCopy
+Storage Explorer
+Blob lifecycle management
+Blob versioning
+Blob soft delete
+VM availability options
+VM Scale Sets
+Azure Container Instances
+Azure App Service
+VNet peering
+User-defined routes
+Application Security Groups
+Service Endpoints
+Azure Load Balancer
+Connection Monitor
 Azure Monitor Agent
-Log Analytics
 Data Collection Rules
-KQL
-Azure Monitor Alerts
-Azure Policy
-Backup and restore
+Azure Monitor alerts
+Action Groups
+Backup alerts and reporting
+Azure Site Recovery
 Bicep CI
 Pull Request What-If
 GitHub OIDC
@@ -690,7 +1342,8 @@ GitHub OIDC
 
 # Reflection
 
-The most useful part of this lab has been learning to separate different layers of infrastructure evidence.
+The most useful part of this lab has been learning to separate different layers
+of infrastructure evidence.
 
 A successful deployment does not automatically prove connectivity.
 
@@ -700,30 +1353,53 @@ Authentication does not prove authorization.
 
 A Private Endpoint does not prove DNS resolution.
 
-A successful Azure resource state does not prove that the workload can actually use the service.
+A configured backup does not prove that a recovery point exists.
 
-The strongest evidence came from validating each layer independently:
+A recovery point does not prove that a restore works.
+
+The strongest evidence comes from validating each layer independently:
 
 ```text
 Template compilation
-        ↓
+        |
+        v
 Azure validation
-        ↓
+        |
+        v
 What-If
-        ↓
+        |
+        v
 Resource deployment
-        ↓
+        |
+        v
 Network reachability
-        ↓
+        |
+        v
 Name resolution
-        ↓
+        |
+        v
 Authentication
-        ↓
+        |
+        v
 Authorization
-        ↓
+        |
+        v
 Application-level request
+        |
+        v
+Backup configuration
+        |
+        v
+Recovery point
+        |
+        v
+Restore
+        |
+        v
+Restored-resource verification
 ```
 
-That process made the lab more useful than simply deploying resources.
+This made the lab more useful than simply deploying resources.
 
-It demonstrated how Azure infrastructure should be reviewed, troubleshot, secured, and verified as an operating system rather than as a collection of individual resources.
+The project now demonstrates how Azure infrastructure can be reviewed,
+troubleshot, secured, backed up, restored, and independently verified.

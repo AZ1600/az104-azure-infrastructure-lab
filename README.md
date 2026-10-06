@@ -2,7 +2,7 @@
 
 An Azure infrastructure project built while preparing for the Microsoft AZ-104 certification.
 
-The lab demonstrates modular Bicep, private networking, Linux virtual machines, Azure Bastion, managed identities, scoped Azure RBAC, Azure Private Link, Private DNS, deployment review, troubleshooting, and operational verification.
+The lab demonstrates modular Bicep, private networking, Linux virtual machines, Azure Bastion, managed identities, scoped Azure RBAC, Azure Private Link, Private DNS, Azure Backup and Recovery Services, deployment review, troubleshooting, and operational verification.
 
 ---
 
@@ -42,6 +42,12 @@ The project currently demonstrates:
 - Managed identity access over Azure Private Link
 - ARM deployment-operation troubleshooting
 - Cost-aware VM deallocation
+- Recovery Services provider registration
+- Recovery Services vault deployment through Bicep
+- VM backup protection using Azure Backup
+- On-demand backup and recovery-point validation
+- Alternate-location OS disk restore
+- Post-restore source VM verification
 
 The compute environment is deployed in Denmark East because an earlier UK South VM deployment encountered a subscription or regional SKU restriction.
 
@@ -74,6 +80,8 @@ The compute environment is deployed in Denmark East because an earlier UK South 
 | Blob Private Endpoint | `pe-az104lab2uvqlnnpoiad6-blob` |
 | Private Endpoint IP | `10.20.3.4` |
 | Private DNS zone | `privatelink.blob.core.windows.net` |
+| Recovery Services vault | `rsv-az104-backup-denmarkeast` |
+| VM backup policy | `DefaultPolicy` |
 | Infrastructure as Code | Bicep |
 
 ---
@@ -216,6 +224,9 @@ The Storage account public-network configuration has not yet been fully disabled
 ├── azuredeploy.bicep
 ├── azuredeploy.json
 ├── dev.bicepparam
+├── backup.bicep
+├── backup.json
+├── backup.dev.bicepparam
 ├── audit-project-tag-policy.json
 │
 ├── modules/
@@ -230,7 +241,9 @@ The Storage account public-network configuration has not yet been fully disabled
 │   ├── storage.bicep
 │   ├── storage.json
 │   ├── storage-private-endpoint.bicep
-│   └── storage-private-endpoint.json
+│   ├── storage-private-endpoint.json
+│   ├── recovery-vault.bicep
+│   └── recovery-vault.json
 │
 ├── docs/
 │   └── screenshots/
@@ -716,6 +729,279 @@ VNet DNS link
 
 ---
 
+
+# Phase 4 — Azure Backup and Recovery
+
+## Recovery Services Provider
+
+Before deploying backup infrastructure, the subscription was checked for:
+
+```text
+Microsoft.RecoveryServices
+```
+
+The provider initially reported:
+
+```text
+NotRegistered
+```
+
+It was registered before the Recovery Services vault was deployed.
+
+This demonstrated that subscription-level provider registration is separate
+from Bicep syntax and deployment validation.
+
+---
+
+## Separate Backup Deployment
+
+Backup infrastructure is managed using:
+
+```text
+backup.bicep
+backup.dev.bicepparam
+modules/recovery-vault.bicep
+```
+
+This deployment is deliberately separate from the Private Storage root
+template.
+
+Its purpose is to avoid unnecessarily redeploying already validated VM,
+networking, Storage, Private Endpoint, Bastion, and RBAC resources.
+
+Azure What-If reported:
+
+```text
+1 to create
+36 to ignore
+```
+
+with the Recovery Services vault as the only new resource.
+
+---
+
+## Recovery Services Vault
+
+The deployed vault is:
+
+```text
+rsv-az104-backup-denmarkeast
+```
+
+in:
+
+```text
+denmarkeast
+```
+
+The protected VM is also located in Denmark East.
+
+The vault deployment reported:
+
+```text
+ProvisioningState:   Succeeded
+PublicNetworkAccess: Enabled
+```
+
+---
+
+## Backup Policy and VM Protection
+
+The vault exposes:
+
+```text
+DefaultPolicy
+EnhancedPolicy
+```
+
+The exercise used:
+
+```text
+DefaultPolicy
+```
+
+After protection was first enabled, Azure reported:
+
+```text
+ProtectionState: IRPending
+```
+
+This showed that backup configuration existed but the first recovery point had
+not yet completed.
+
+---
+
+## On-Demand Backup
+
+An on-demand backup was triggered for:
+
+```text
+vm-az104-ubuntu
+```
+
+The backup completed successfully.
+
+The backup workflow included:
+
+```text
+Take Snapshot
+Transfer data to vault
+Validate Backup
+```
+
+Azure reported:
+
+```text
+Backup Size: 3521 MB
+Status:      Completed
+```
+
+After completion the VM reported:
+
+```text
+ProtectionState:  Protected
+Health:           Passed
+LastBackupStatus: Completed
+```
+
+---
+
+## Recovery Point Validation
+
+The first verified recovery point was:
+
+```text
+9138012723089140609
+```
+
+with:
+
+```text
+Type: CrashConsistent
+```
+
+This provided direct evidence that the VM had a usable stored recovery point.
+
+---
+
+## Alternate-Location Restore
+
+Recovery was tested without replacing the original VM.
+
+A temporary restore environment was created:
+
+```text
+rg-az104-restore-lab
+```
+
+The latest recovery point was restored using:
+
+```text
+AlternateLocation
+```
+
+and only the OS disk was restored.
+
+The restore job completed successfully.
+
+The resulting managed disk was:
+
+```text
+vmaz104ubuntu-osdisk-20261006-153823
+```
+
+with:
+
+```text
+Location:           denmarkeast
+SKU:                Standard_LRS
+State:              Unattached
+ProvisioningState:  Succeeded
+```
+
+---
+
+## Original VM Verification
+
+After the restore, the original VM remained:
+
+```text
+Name:               vm-az104-ubuntu
+Location:           denmarkeast
+ProvisioningState:  Succeeded
+PowerState:         VM deallocated
+PrivateIP:          10.20.1.4
+PublicIP:           None
+```
+
+This demonstrated non-destructive recovery testing.
+
+---
+
+## Restore Cleanup
+
+The temporary restore resource group was deleted after validation.
+
+The final check returned:
+
+```text
+ResourceGroupNotFound
+```
+
+which confirmed the temporary restore environment had been removed.
+
+The Recovery Services vault and protected source VM remain in the main lab
+resource group.
+
+---
+
+## Backup and Recovery Evidence Model
+
+The exercise demonstrated:
+
+```text
+Recovery Services provider
+        |
+        v
+Recovery Services vault
+        |
+        v
+Backup policy
+        |
+        v
+VM protection
+        |
+        v
+On-demand backup
+        |
+        v
+Completed recovery point
+        |
+        v
+Alternate-location restore
+        |
+        v
+Restored disk verification
+        |
+        v
+Original VM verification
+        |
+        v
+Temporary-resource cleanup
+```
+
+The key lesson was:
+
+```text
+Backup configured
+        !=
+Recovery proven
+```
+
+A restore should be tested before recovery is considered validated.
+
+---
+
 # Current Active Deployment Scope
 
 The current `azuredeploy.bicep` is intentionally focused on the Private Storage networking phase.
@@ -1128,7 +1414,13 @@ Azure Bastion and Private Endpoint resources can also have associated costs, so 
 [Next] KQL queries
 [Next] Azure Monitor alerts
 [Next] Azure Policy
-[Next] Backup and recovery
+[Complete] Recovery Services provider registration
+[Complete] Recovery Services vault deployment
+[Complete] VM backup protection
+[Complete] On-demand backup
+[Complete] Recovery-point validation
+[Complete] Alternate-location OS disk restore
+[Complete] Original VM post-restore verification
 [Next] GitHub Actions Bicep validation
 [Next] Pull Request What-If
 [Next] GitHub-to-Azure OIDC
@@ -1182,10 +1474,6 @@ Future exercises include:
 - Azure Policy definitions and assignments
 - deliberate policy non-compliance testing
 - policy remediation
-- Recovery Services Vault
-- VM backup
-- recovery-point validation
-- restore testing
 - GitHub Actions Bicep validation
 - Pull Request What-If
 - Azure authentication through GitHub OIDC
