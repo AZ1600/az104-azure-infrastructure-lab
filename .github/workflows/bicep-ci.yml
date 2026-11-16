@@ -1,0 +1,34 @@
+name: Bicep CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.bicep'
+      - '**/*.bicepparam'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/bicep-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.bicep'
+      - '**/*.bicepparam'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/bicep-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Compile Bicep and verify security baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Bicep and deployment parameters without Azure credentials
+        run: bash scripts/validate-bicep.sh

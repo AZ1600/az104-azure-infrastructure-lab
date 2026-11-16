@@ -1032,6 +1032,26 @@ This avoids modifying already validated resources unnecessarily.
 
 ---
 
+# Offline Bicep CI and Security Regression Tests
+
+GitHub Actions now validates infrastructure changes before they reach a deployment:
+
+- Compiles the current Bicep root templates and reusable modules.
+- Compiles `dev.bicepparam` and `backup.dev.bicepparam` against their Bicep templates.
+- Checks compiled ARM templates for the private-VM, SSH, managed-identity, Storage and Private Link baseline.
+- Checks that the current private-storage root does not bring VM provisioning back into its deployment scope.
+- Runs negative regression tests that prove unsafe template changes are rejected.
+
+Run locally with Azure CLI and Python 3:
+
+```bash
+bash scripts/validate-bicep.sh
+```
+
+CI uses the **current Bicep source**, not the older generated JSON files retained as historical evidence and test fixtures. It requires no Azure credentials and performs **no Azure What-If, deployment, or resource updates**. It validates code-level contracts, not the live Azure security posture; Azure What-If and resource verification remain separate steps.
+
+---
+
 # Deployment Workflow
 
 ## 1. Build
